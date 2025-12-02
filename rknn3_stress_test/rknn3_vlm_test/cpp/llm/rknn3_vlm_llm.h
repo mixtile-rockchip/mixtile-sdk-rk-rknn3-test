@@ -28,6 +28,8 @@
 #define MAX_NEW_TOKENS 1024
 #define MAX_CONTEXT_LEN 1024
 
+#define RKNN3_DEFAULT_DEVICE_ID 0
+
 typedef struct {
     rknn3_context   rknn_ctx;
     rknn3_session* rknn_sess;
@@ -36,7 +38,7 @@ typedef struct {
     char postfix_prompt[128];
 } rknn3_vlm_llm_context;
 
-int init_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, const char* model_path, const char* weight_path, rknn3_llm_param* params, int n_params, RKLLMCallback callback, uint32_t core_mask);
+int init_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, const char* model_path, const char* weight_path, rknn3_llm_param* params, int n_params, RKLLMCallback callback, uint32_t core_mask, uint32_t device_id);
 
 int release_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx);
 

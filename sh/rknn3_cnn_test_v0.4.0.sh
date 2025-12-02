@@ -4,10 +4,14 @@ set -uo pipefail
 
 echo performance | tee $(find /sys/ -name *governor)
 
-[ $# -lt 3 ] && { echo "用法: $0 <模型> <循环时间> <循环次数> "; exit 1; }
+# Device Id 可以通过 rknn-smi info -l 预先获取
+[ $# -lt 3 ] && { echo "用法: $0 <模型> <循环时间> <循环次数> <Device Id>"; exit 1; }
 model=$1; time_loop=$2 cnt_loop=$3
+# 默认 device_id = 0
+device_id=${4:-0}
 
-echo "model:{model}"
+
+echo "model:${model}"
 echo "time_loop:${time_loop}"
 model_dirname=$(basename "$(dirname "$model")")
 pids=()               # 当前 shell 直接启动的 PID
@@ -28,7 +32,8 @@ for core in {1..8}; do
         -c "0x$(printf '%02x' $mask)" \
 		-i "${model}.jpg" \
 		-tl "${time_loop}" \
-		-cl "${cnt_loop}" >"$log" 2>&1 &
+		-cl "${cnt_loop}" \
+		-id "${device_id}" >"$log" 2>&1 &
     pids+=($!)        # 记录 PID
 done
 

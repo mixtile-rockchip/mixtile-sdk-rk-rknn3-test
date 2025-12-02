@@ -48,7 +48,7 @@ static void dump_tensor_attr(rknn3_tensor_attr* attrs)
 }
 
 
-int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask)
+int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask, uint32_t device_id)
 {
     int ret;
     rknn3_context ctx = 0;
@@ -57,8 +57,27 @@ int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* mode
     config.run_core_mask = core_mask;
     config.user_mem_internal = 1; // 使用用户管理的internal内存
 
+    // 获取目前连接的RK182X信息
+    rknn3_devices rknn3_devices;
+    memset(&rknn3_devices, 0 ,sizeof(rknn3_devices));
+    ret = rknn3_find_devices(&rknn3_devices);
+    if (ret != RKNN3_SUCCESS || rknn3_devices.n_devices <= 0) {
+        printf("find devices failed, or data is invalid: %d\n", ret);
+        return ret;
+    }
+
+    if (device_id >= rknn3_devices.n_devices) {
+        printf("warning!!! device_id = %d is not allow ,use default:%d, %s, %d\n", device_id, RKNN3_DEFAULT_DEVICE_ID, __FUNCTION__, __LINE__);
+        device_id = RKNN3_DEFAULT_DEVICE_ID;
+    }
+
+    printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
+
+    rknn3_init_extend init_extend = {0};
+    init_extend.device_id = rknn3_devices.devices[device_id].id;
+
     // RKNN Init
-    ret = rknn3_init(&ctx, NULL);
+    ret = rknn3_init(&ctx, &init_extend);
     if (ret < 0)
     {
         printf("[rknn3_model_stress_test_error] rknn_init fail ret=%d\n", ret);

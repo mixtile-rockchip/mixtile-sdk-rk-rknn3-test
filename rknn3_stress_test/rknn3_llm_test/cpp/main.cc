@@ -16,6 +16,8 @@
 
 #define LOGW(fmt, ...) printf("\033[33m" fmt "\033[0m", ##__VA_ARGS__)
 
+#define RKNN3_DEFAULT_DEVICE_ID 0
+
 rknn3_session *session = nullptr;
 
 struct timeval start, first_token, end;
@@ -144,7 +146,7 @@ uint64_t read_tokens_from_bin(const char *binPath, int32_t *tokens) {
     return n_tokens;
 }
 
-rknn3_context init_context_and_model(const char *model_path, const char *weight_path, uint32_t core_mask, const char *device_id) {
+rknn3_context init_context_and_model(const char *model_path, const char *weight_path, uint32_t core_mask, uint32_t device_id) {
     int ret = 0;
     rknn3_config config;
     rknn3_context ctx = 0;
@@ -156,38 +158,19 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
         printf("[rknn3_stress_test_error] rknn3_find_devices fail! ret=%d, devs.n_devices = %d\n", ret, devs.n_devices);
         return -1;
     }
- 
- 
-    // 检查devices指针是否有效
-    if (devs.devices == NULL) {
-        printf("[rknn3_stress_test_error] rknn3_find_devices returned n_devices > 0 but devices is NULL!\n");
-        return -1;
-    }
-    
-    // 检查第一个设备的ID是否有效
-    if (devs.devices[0].id == NULL) {
-        printf("[rknn3_stress_test_error] device[0].id is NULL!\n");
-        return -1;
-    }
-    
-    printf("[rknn3_stress_test_log] device[0].id=%s\n", devs.devices[0].id);
-    
-    // init context
-    rknn3_init_extend extend;
-    memset(&extend, 0, sizeof(extend));
-    
-     // 根据是否指定了设备ID来设置
-    if (device_id != nullptr) {
-        // 使用指定的设备ID
-        extend.device_id = (char*)device_id;
-        printf("[rknn3_stress_test_log] Using specified device ID: %s\n", device_id);
-    } else {
-        // 多个设备时，使用第一个设备的ID
-        extend.device_id = devs.devices[0].id;
-        printf("[rknn3_stress_test_log] Using first device ID: %s\n", extend.device_id);
-    } 
 
-    ret = rknn3_init(&ctx, &extend);
+    if (device_id >= devs.n_devices) {
+        printf("warning!!! device_id = %d is not allow ,use default:%d, %s, %d\n", device_id, RKNN3_DEFAULT_DEVICE_ID, __FUNCTION__, __LINE__);
+        device_id = RKNN3_DEFAULT_DEVICE_ID;
+    }
+
+    printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, devs.devices[device_id].id);
+
+    // init context
+    rknn3_init_extend init_extend = {0};
+    init_extend.device_id = devs.devices[device_id].id;
+
+    ret = rknn3_init(&ctx, &init_extend);
     if (ret < 0) {
         printf("[rknn3_model_stress_test_error] rknn3_init fail! ret=%d\n", ret);
         return -1;
@@ -299,7 +282,7 @@ int main(int argc, char **argv) {
     char *weight_path =  NULL;
     const char *tokenizer_path =  NULL;
     const char *embedding_path =  NULL;
-        const char *device_id = NULL; 
+    uint64_t device_id = RKNN3_DEFAULT_DEVICE_ID; 
     int32_t max_context_len =  NULL;
     uint64_t n_input_tokens = 128;
     int32_t max_new_tokens = 128;
@@ -328,8 +311,8 @@ int main(int argc, char **argv) {
             n_input_tokens = atoi(argv[i+1]);
         }else if (strcmp(argv[i], "-no") == 0 || strcmp(argv[i], "--max_new_tokens") == 0){
             max_new_tokens = atoi(argv[i+1]);
-        } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--device_id") == 0){
-            device_id = argv[i+1];  // 指定设备ID
+        } else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0){
+            device_id = atoi(argv[i+1]);  // 指定设备ID
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv);
             return 0;

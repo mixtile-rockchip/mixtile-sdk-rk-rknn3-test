@@ -173,12 +173,12 @@ int release_internal_share(rknn_app_context_t* app_ctx)
 }
 
 
-int init_rknn3_vlm_model(rknn_app_context_t* app_ctx, const char* llm_model_path, const char* llm_weight_path, const char* vision_model_path, const char* vision_weight_path, rknn3_llm_param* params, int n_params, RKLLMCallback callback, uint32_t vision_core_mask, uint32_t llm_core_mask)
+int init_rknn3_vlm_model(rknn_app_context_t* app_ctx, const char* llm_model_path, const char* llm_weight_path, const char* vision_model_path, const char* vision_weight_path, rknn3_llm_param* params, int n_params, RKLLMCallback callback, uint32_t vision_core_mask, uint32_t llm_core_mask, uint32_t device_id)
 {
     int ret = 0;
 
     printf("--> init rknn3_vlm vision model\n");
-    ret = init_rknn3_vlm_vision(&(app_ctx->vision), vision_model_path, vision_weight_path, vision_core_mask);
+    ret = init_rknn3_vlm_vision(&(app_ctx->vision), vision_model_path, vision_weight_path, vision_core_mask, device_id);
     if (ret < 0)
     {
         printf("rknn_init rknn3_vlm vision model fail! ret=%d\n", ret);
@@ -186,7 +186,7 @@ int init_rknn3_vlm_model(rknn_app_context_t* app_ctx, const char* llm_model_path
     }
 
     printf("--> init rknn3_vlm llm model\n");
-    ret = init_rknn3_vlm_llm(&(app_ctx->llm), llm_model_path, llm_weight_path, params, n_params, callback, llm_core_mask);
+    ret = init_rknn3_vlm_llm(&(app_ctx->llm), llm_model_path, llm_weight_path, params, n_params, callback, llm_core_mask, device_id);
     if (ret < 0)
     {
         printf("rknn_init rknn3_vlm llm model fail! ret=%d\n", ret);

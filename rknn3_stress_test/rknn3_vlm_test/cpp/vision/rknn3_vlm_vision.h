@@ -23,6 +23,8 @@
 #define MODEL_WIDTH 392 // 由于vision模型被裁剪了，需要手动添加这些参数配置
 #define MODEL_HEIGHT 392
 
+#define RKNN3_DEFAULT_DEVICE_ID 0
+
 extern TIMER vision_cost;
 
 typedef struct {
@@ -40,7 +42,7 @@ typedef struct {
     int pruned_version_flag;
 } rknn3_vlm_vision_context;
 
-int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask);
+int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask, uint32_t device_id);
 
 int release_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx);
 

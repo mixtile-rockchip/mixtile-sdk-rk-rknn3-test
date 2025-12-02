@@ -11,8 +11,9 @@
 
 echo performance | tee $(find /sys/ -name *governor)
 
+# Device Id 可以通过 rknn-smi info -l 预先获取
 if [ $# -lt 1 ]; then
-    echo "用法: $0 <模型目录> [loop_time_hours] [count_loop]"
+    echo "用法: $0 <模型目录> [loop_time_hours] [count_loop] [device_id]"
     exit 1
 fi
 
@@ -20,6 +21,7 @@ fi
 MODEL_DIR="$1"
 LOOP_TIME="${2:-1}"          # 默认 loop_time = 1 小时
 COUNT_LOOP="${3:-1}"         # 默认 count_loop = 1 次
+DEVICE_ID="${4:-0}"          # 默认 device_id = 0
 
 # 模型文件定义
 VISION_MODEL="${MODEL_DIR}-vision.rknn"
@@ -47,6 +49,7 @@ echo "✅ 启动 rknn3_vlm_demo..."
 echo "模型目录: $MODEL_DIR"
 echo "Loop 时间: ${LOOP_TIME} 小时"
 echo "循环次数: ${COUNT_LOOP}"
+echo "设备id: ${DEVICE_ID}"
 
 # 执行推理命令
 rknn3_vlm_demo \
@@ -62,7 +65,8 @@ rknn3_vlm_demo \
     -pi "$PROMPT_FILE" \
     -vl "$COUNT_LOOP" \
     -ll "$COUNT_LOOP" \
-    -tl "$LOOP_TIME"
+    -tl "$LOOP_TIME" \
+    -id "$DEVICE_ID"
 
 # 检查执行状态
 if [ $? -eq 0 ]; then

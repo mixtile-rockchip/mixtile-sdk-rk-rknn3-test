@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
     char *tokenizer_path = NULL, *embedding_path = NULL;
     uint32_t vision_core_mask = 0, llm_core_mask = 0;
     char *img_path = NULL, *prompt_path = NULL;
-    uint32_t vision_loop = 1, llm_loop = 1,time_loop = 0;
+    uint32_t vision_loop = 1, llm_loop = 1,time_loop = 0, device_id = RKNN3_DEFAULT_DEVICE_ID;
 
     for (int i = 1; i < argc; i += 2) {
         if (strcmp(argv[i], "-vm") == 0 || strcmp(argv[i], "--vision_model") == 0) {
@@ -196,6 +196,8 @@ int main(int argc, char **argv) {
             llm_loop = atoi(argv[i + 1]);
         } else if(strcmp(argv[i], "-tl") == 0 || strcmp(argv[i], "--time_loop") == 0) {
             time_loop = atoi(argv[i + 1]);
+        } else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0) {
+            device_id = atoi(argv[i + 1]);
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv);
             return 0;
@@ -218,6 +220,7 @@ int main(int argc, char **argv) {
     printf("prompt.ini: %s\n", prompt_path);
     printf("vision_loop: %d\n", vision_loop);
     printf("llm_loop: %d\n", llm_loop);
+    printf("device_id : %d\n", device_id);
 
     // 检查必要参数
     if (!vision_model_path || !vision_weight_path || !llm_model_path || !llm_weight_path || vision_core_mask == 0 || llm_core_mask == 0) {
@@ -365,7 +368,7 @@ int main(int argc, char **argv) {
     // printf("size :%d\n",sizeof(system_prompt));
     // printf("==================================rknn_app_ctx.llm.system_prompt: %s,system_prompt:%s\n",rknn_app_ctx.llm.system_prompt,system_prompt);
     // printf("==================================rknn_app_ctx.llm.prefix_prompt: %s\n",rknn_app_ctx.llm.prefix_prompt);
-    ret = init_rknn3_vlm_model(&rknn_app_ctx, llm_model_path, llm_weight_path, vision_model_path, vision_weight_path, &params, n_params, callback, vision_core_mask, llm_core_mask);
+    ret = init_rknn3_vlm_model(&rknn_app_ctx, llm_model_path, llm_weight_path, vision_model_path, vision_weight_path, &params, n_params, callback, vision_core_mask, llm_core_mask, device_id);
     if (ret != 0) {
         printf("[rknn3_model_stress_test_error] init_rknn3_vlm_model fail! ret=%d llm_model_path=%s vision_model_path=%s\n", ret, llm_model_path, vision_model_path);
         goto out;

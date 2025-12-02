@@ -11,9 +11,10 @@ echo performance | tee $(find /sys/ -name *governor)
 MAX_CONTEXT=1024
 CORE_MASK=0xff
 
+
 # 读取用户输入（如未传参则提示）
-if [ $# -ne 5 ]; then
-    echo "Usage: $0 <model_dir> <seq_len> <new_tokens> <loop_count> <loop_time>"
+if [ $# -lt 5 ]; then
+    echo "Usage: $0 <model_dir> <seq_len> <new_tokens> <loop_count> <loop_time> <device_id>"
     exit 1
 fi
 MODEL_DIR=$1
@@ -21,6 +22,8 @@ PROMPT_LEN=$2
 GEN_LEN=$3
 LOOP_CNT=$4
 TIME_LOOP=$5
+# 默认 device_id = 0
+DEVICE_ID=${6:-0}
 
 
 
@@ -35,4 +38,6 @@ rknn3_llm_demo \
     -no "$GEN_LEN" \
     -c "$CORE_MASK" \
     -cl "$LOOP_CNT" \
-	-tl "$TIME_LOOP" 
+    -tl "$TIME_LOOP" \
+    -id "$DEVICE_ID"
+
