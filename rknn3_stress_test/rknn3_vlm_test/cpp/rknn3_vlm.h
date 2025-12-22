@@ -16,7 +16,7 @@
 #ifndef _RKNN_DEMO_RKNN3_VLM_H_
 #define _RKNN_DEMO_RKNN3_VLM_H_
 
-#include "rknn_api.h"
+#include "rknn3_api.h"
 #include "common.h"
 #include "rknn3_vlm_vision.h"
 #include "rknn3_vlm_llm.h"

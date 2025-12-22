@@ -19,7 +19,7 @@
 #include "rknn3_vlm.h"
 #include "common.h"
 #include "image_utils.h"
-#include "rknn_api.h"
+// #include "rknn_api.h"
 #include <math.h>
 
 

@@ -11,7 +11,7 @@
 
 #include "Tokenizer.h"
 #include "float16.h"
-#include "rknn_api.h"
+#include "rknn3_api.h"
 #include "easy_timer.h"
 
 #define LOGW(fmt, ...) printf("\033[33m" fmt "\033[0m", ##__VA_ARGS__)

@@ -1,4 +1,0 @@
-1. 将整个目录放到rknn3_model_zoo/example 目录下
-2. 编译命令（rknn3_model_zoo根目录）：./build-linux.sh -t rk3588 -a aarch64 -b Release -d vision_common_test
-3. 将编译生成的install目录push到板子
-4. 板端执行命令：./rknn3_vision_demo xxx.rknn xxx.weight /data/demo.jpg 0xff 1 其中：0xff为核心掩码

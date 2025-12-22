@@ -16,7 +16,7 @@
 #ifndef _RKNN_DEMO_RKNN3_VLM_VISION_UTILS_H_
 #define _RKNN_DEMO_RKNN3_VLM_VISION_UTILS_H_
 
-#include "rknn_api.h"
+#include "rknn3_api.h"
 #include "common.h"
 #include "easy_timer.h"
 

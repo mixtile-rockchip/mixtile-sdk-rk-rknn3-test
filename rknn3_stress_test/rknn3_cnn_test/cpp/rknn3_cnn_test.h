@@ -16,7 +16,7 @@
 #ifndef _RKNN_DEMO_COMMON_VISION_UTILS_H_
 #define _RKNN_DEMO_COMMON_VISION_UTILS_H_
 
-#include "rknn_api.h"
+#include "rknn3_api.h"
 #include "common.h"
 
 #define RKNN3_DEFAULT_DEVICE_ID 0
