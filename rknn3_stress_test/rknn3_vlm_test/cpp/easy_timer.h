@@ -12,59 +12,63 @@
 class TIMER
 {
 private:
-    struct timeval start_time, stop_time;
-    double __get_us(struct timeval t) { return (t.tv_sec * 1000000 + t.tv_usec); }
+    struct timespec start_time, stop_time;
     char indent[40] = "-- ";
 
+    double __get_us(struct timespec t)
+    {
+        return (static_cast<double>(t.tv_sec) * 1000000.0 + static_cast<double>(t.tv_nsec) / 1000.0);
+    }
+
 public:
-    TIMER() {}
+    TIMER() 
+    {
+        start_time = {0, 0};
+        stop_time = {0, 0};
+    }
     ~TIMER() {}
 
     void indent_set(char *s)
     {
-        strcpy(indent, s);
+        strncpy(indent, s, sizeof(indent) - 1);
     }
+    
     void indent_set(const char *s)
     {
-        strcpy(indent, s);
+        strncpy(indent, s, sizeof(indent) - 1);
     }
 
     void tik()
     {
-        gettimeofday(&start_time, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
     }
 
     void tok()
     {
-        gettimeofday(&stop_time, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &stop_time);
     }
 
 #ifdef TIMING_DISABLED
-    void print_time(char *str)
-    {
-        // No action if TIMING_DISABLED is defined
-    }
-    void print_time(const char *str)
-    {
-        // No action if TIMING_DISABLED is defined
-    }
+    void print_time(char *str) {}
+    void print_time(const char *str) {}
 #else
     void print_time(char *str)
     {
-        printf("%s", indent);
-        printf("%s use: %f ms\n", str, get_time());
+        printf("%s%s use: %f ms\n", indent, str, get_time());
     }
+    
     void print_time(const char *str)
     {
-        printf("%s", indent);
-        printf("%s use: %f ms\n", str, get_time());
+        printf("%s%s use: %f ms\n", indent, str, get_time());
     }
 #endif
 
     float get_time()
     {
-        return (__get_us(stop_time) - __get_us(start_time)) / 1000;
+        double sec_diff = static_cast<double>(stop_time.tv_sec - start_time.tv_sec);
+        double nsec_diff = static_cast<double>(stop_time.tv_nsec - start_time.tv_nsec);
+        
+        return static_cast<float>(sec_diff * 1000.0 + nsec_diff / 1000000.0);
     }
 };
-
-#endif // _RKNN_DEMO_TIMER_H_
+#endif

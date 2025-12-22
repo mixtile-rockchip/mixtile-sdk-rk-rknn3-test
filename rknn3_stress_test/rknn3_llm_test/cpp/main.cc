@@ -16,12 +16,11 @@
 
 #define LOGW(fmt, ...) printf("\033[33m" fmt "\033[0m", ##__VA_ARGS__)
 
-#define RKNN3_DEFAULT_DEVICE_ID 0
-
 rknn3_session *session = nullptr;
 
-struct timeval start, first_token, end;
-struct timeval decode, decode_tmp;
+// struct timeval start, first_token, end;
+TIMER first_token, decode_time_ms;
+// struct timeval decode, decode_tmp;
 
 static bool first_decode = true;
 struct embedding_info {
@@ -85,8 +84,10 @@ int result_callback(void *userdata, RKLLMResult *result, LLMCallState state) {
         }
 
         if (first_decode) {
-            gettimeofday(&first_token, NULL);
+            // gettimeofday(&first_token, NULL);
+            first_token.tok();
             first_decode = false;
+            decode_time_ms.tik();
         }
         fflush(stdout);
     }
@@ -146,7 +147,7 @@ uint64_t read_tokens_from_bin(const char *binPath, int32_t *tokens) {
     return n_tokens;
 }
 
-rknn3_context init_context_and_model(const char *model_path, const char *weight_path, uint32_t core_mask, uint32_t device_id) {
+rknn3_context init_context_and_model(const char *model_path, const char *weight_path, uint32_t core_mask, const char *device_id) {
     int ret = 0;
     rknn3_config config;
     rknn3_context ctx = 0;
@@ -158,19 +159,38 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
         printf("[rknn3_stress_test_error] rknn3_find_devices fail! ret=%d, devs.n_devices = %d\n", ret, devs.n_devices);
         return -1;
     }
-
-    if (device_id >= devs.n_devices) {
-        printf("warning!!! device_id = %d is not allow ,use default:%d, %s, %d\n", device_id, RKNN3_DEFAULT_DEVICE_ID, __FUNCTION__, __LINE__);
-        device_id = RKNN3_DEFAULT_DEVICE_ID;
+ 
+ 
+    // 检查devices指针是否有效
+    if (devs.devices == NULL) {
+        printf("[rknn3_stress_test_error] rknn3_find_devices returned n_devices > 0 but devices is NULL!\n");
+        return -1;
     }
-
-    printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, devs.devices[device_id].id);
-
+    
+    // 检查第一个设备的ID是否有效
+    if (devs.devices[0].id == NULL) {
+        printf("[rknn3_stress_test_error] device[0].id is NULL!\n");
+        return -1;
+    }
+    
+    printf("[rknn3_stress_test_log] device[0].id=%s\n", devs.devices[0].id);
+    
     // init context
-    rknn3_init_extend init_extend = {0};
-    init_extend.device_id = devs.devices[device_id].id;
+    rknn3_init_extend extend;
+    memset(&extend, 0, sizeof(extend));
+    
+     // 根据是否指定了设备ID来设置
+    if (device_id != nullptr) {
+        // 使用指定的设备ID
+        extend.device_id = (char*)device_id;
+        printf("[rknn3_stress_test_log] Using specified device ID: %s\n", device_id);
+    } else {
+        // 多个设备时，使用第一个设备的ID
+        extend.device_id = devs.devices[0].id;
+        printf("[rknn3_stress_test_log] Using first device ID: %s\n", extend.device_id);
+    } 
 
-    ret = rknn3_init(&ctx, &init_extend);
+    ret = rknn3_init(&ctx, &extend);
     if (ret < 0) {
         printf("[rknn3_model_stress_test_error] rknn3_init fail! ret=%d\n", ret);
         return -1;
@@ -282,13 +302,13 @@ int main(int argc, char **argv) {
     char *weight_path =  NULL;
     const char *tokenizer_path =  NULL;
     const char *embedding_path =  NULL;
-    uint64_t device_id = RKNN3_DEFAULT_DEVICE_ID; 
+    const char *device_id = NULL; 
     int32_t max_context_len =  NULL;
     uint64_t n_input_tokens = 128;
     int32_t max_new_tokens = 128;
     uint32_t core_mask = 0xff;
     uint32_t cnt_loop = 1;
-    uint32_t time_loop = 0;
+    float time_loop = 0.f;
 
      for (int i = 1; i < argc; i += 2) {
         if (strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--model_path") == 0) {
@@ -304,15 +324,15 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "-cl") == 0 || strcmp(argv[i], "--cnt_loop") == 0) {
             cnt_loop = atoi(argv[i + 1]);
         } else if(strcmp(argv[i], "-tl") == 0 || strcmp(argv[i], "--time_loop") == 0) {
-            time_loop = atoi(argv[i + 1]);
+            time_loop = atof(argv[i + 1]);
         }else if(strcmp(argv[i], "-ctx") == 0 || strcmp(argv[i], "--max_context_len") == 0) {
             max_context_len = atoi(argv[i + 1]);
         } else if(strcmp(argv[i], "-ni") == 0 || strcmp(argv[i], "--n_input_tokens") == 0) {
             n_input_tokens = atoi(argv[i+1]);
         }else if (strcmp(argv[i], "-no") == 0 || strcmp(argv[i], "--max_new_tokens") == 0){
             max_new_tokens = atoi(argv[i+1]);
-        } else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0){
-            device_id = atoi(argv[i+1]);  // 指定设备ID
+        } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--device_id") == 0){
+            device_id = argv[i+1];  // 指定设备ID
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv);
             return 0;
@@ -341,14 +361,24 @@ int main(int argc, char **argv) {
     int i = 0;
     int llm_n_inputs = 1;
 
-    float ttft_us = 0.0f;
+    // float ttft_us = 0.0f;
     int prefill_n_tokens = 0;
     float prefill_per_second = 0.f;
-    float decode_time_us = 0.f;
+    // float decode_time_us = 0.f;
     float tpot = 0.f;
     float tps = 0.f;
     float total_time = 0.f;
+    float infer_total_time = 0.f;
 
+    float last_time = 0.0f;
+    TIMER cost_time;    // 记录累计运行总时间
+    TIMER cur_time;     // 记录当前单次推理时间
+    float print_log_ms = 1.f *1000.f*60.f; // 1min print
+    float acc_ms = 0.f;
+    int acc_cnt = 0;
+
+    int iter = 0;
+    float time_limit_ms = (time_loop != 0) ? (time_loop * 3600.0f * 1000.0f) : -1.0f;
 
     rknn3_llm_infer_param llm_infer_param = { .keep_history = 0, .max_new_tokens = max_new_tokens };
     rknn3_llm_input llm_inputs[llm_n_inputs];
@@ -359,7 +389,7 @@ int main(int argc, char **argv) {
     rknn3_llm_input input;
 
 
-    printf("*******************************NEW TEST**********************************\n");
+    printf("*******************************RKNN3_LLM_TEST**********************************\n");
 
     // init context and model
     ctx = init_context_and_model(model_path, weight_path, core_mask, device_id);
@@ -416,8 +446,8 @@ int main(int argc, char **argv) {
         goto exit;
     }
 
-    printf("max_context_len %d\n", params.max_context_len);
-    printf("max_new_tokens %d\n", max_new_tokens);
+    // printf("max_context_len %d\n", params.max_context_len);
+    // printf("max_new_tokens %d\n", max_new_tokens);
 
     srand(42);  // Use fixed seed
     for (i = 0; i < n_input_tokens; i++) {
@@ -428,131 +458,76 @@ int main(int argc, char **argv) {
     input.llm_input = input_tensor;
     llm_inputs[0] = input;
 
-    
-    if(time_loop != 0) {
-        float last_time = 0.;
+    cost_time.tik();
+    while (true) {
+        // 1. 记录单次推理开始时间 (用于 TTFT 和基础计时)
         // gettimeofday(&start, NULL);
-        TIMER cost_time;
-        TIMER cur_time;
-        cost_time.tik();
-        float time_thread = time_loop *60*60*1000; //ms
-        // TIMER COS?
-        while(1) {
-            // gettimeofday(&start, NULL);
-            cur_time.tik();
-            first_decode = true;
-            ret = rknn3_session_run(session, llm_inputs, llm_n_inputs, &llm_infer_param);
-            if (ret != RKNN3_SUCCESS) {
-                printf("[rknn3_model_stress_test_error] rknn3_session_run failed, ret=%d\n", ret);
-                goto exit;
-            }
-            cur_time.tok();
-            cost_time.tok();
-            // gettimeofday(&end, NULL);
-            total_time = cur_time.get_time();
-            float tmp_time = cost_time.get_time();
-            if(last_time !=0.0f || (tmp_time > 5000.)) {
-                check_perfance(last_time,total_time);
-            }
-            last_time = total_time;
-            
-            printf("cost_time: %8.2f\n", tmp_time);
 
-            // time_thread = 0.f;
-            if(tmp_time >= time_thread) {
+        cur_time.tik();
+        first_token.tik();
+        first_decode = true;
+
+        // 2. 执行模型推理
+        ret = rknn3_session_run(session, llm_inputs, llm_n_inputs, &llm_infer_param);
+        if (ret != RKNN3_SUCCESS) {
+            printf("[rknn3_model_stress_test_error] rknn3_session_run failed, ret=%d\n", ret);
+            goto exit;
+        }
+        decode_time_ms.tok();
+        // 3. 结束计时
+        cur_time.tok();
+        cost_time.tok();
+        // gettimeofday(&end, NULL);
+
+        total_time = cur_time.get_time(); // 当前单次耗时
+        infer_total_time = cost_time.get_time(); // 累计运行耗时
+
+        // 4. 性能波动检查
+        if (last_time != 0.0f || (time_loop != 0 ? infer_total_time > 5000.0f : iter > 10)) {
+            check_perfance(last_time, total_time);
+        }
+        last_time = total_time;
+
+        // 5. 迭代计数更新
+        iter++;
+        acc_cnt ++;
+        acc_ms += total_time;
+
+        if(acc_cnt >= 100) {
+            printf("run_cnt diff: %d, run cost: %8.2f ms \n",acc_cnt,acc_ms);
+            acc_cnt = 0;
+            acc_ms = 0.0f;
+        }
+        
+        // 6. 统一退出条件判断
+        if (time_loop != 0.f) {
+            // 时间模式：达到指定小时数退出
+            if (infer_total_time >= time_limit_ms) {
+                infer_total_time = infer_total_time;
+                printf("Time limit reached. cost_time: %8.3f h\n", infer_total_time/1000.f/60.f/60.f);
+                break;
+            }
+        } else {
+            // 次数模式：达到指定次数退出
+            // printf("run cnt: %d / %d \n",iter,cnt_loop);
+            if (iter >= cnt_loop) {
                 break;
             }
         }
-    } else{
-        float last_time = 0.;
-        TIMER cost_time;
-        for(i = 0;i < cnt_loop;i ++) {
-            // start.tv_sec
-            // gettimeofday(&start, NULL);
-            gettimeofday(&start, NULL);
-            first_decode = true;
-            cost_time.tik();
-            ret = rknn3_session_run(session, llm_inputs, llm_n_inputs, &llm_infer_param);
-            if (ret != RKNN3_SUCCESS) {
-                printf("[rknn3_model_stress_test_error] rknn3_session_run failed, ret=%d\n", ret);
-                goto exit;
-            }
-            cost_time.tok();
-            gettimeofday(&end, NULL);
-            // gettimeofday(&end, NULL);
-            total_time = cost_time.get_time();
-            // float tmp_time = cost_time.get_time();
-            if(last_time !=0.0f || (i> 10)) {
-                check_perfance(last_time,total_time);
-            }
-            last_time = total_time;
-
-            // printf("Total time: %.3f ms\n", total_time);
-        }
-        ret = rknn3_session_query_state(session, &state);
-        if (ret != RKNN3_SUCCESS) {
-            printf("rknn3_session_query_state failed, ret=%d\n", ret);
-            goto exit;
-        }
-        
-        // calculate TTFT
-        ttft_us = (first_token.tv_sec - start.tv_sec) * 1000000 + (first_token.tv_usec - start.tv_usec);
-        printf("\nTTFT: %.3f s (%.3f ms)\n", ttft_us / 1000000.0, ttft_us / 1000.0);
-
-        // calculate Prefill
-        prefill_n_tokens = state.n_prefill_tokens;
-        prefill_per_second = prefill_n_tokens / (ttft_us / 1000000.0);
-        printf("Prefill: %d/%.3f = %.3f tokens/s\n", prefill_n_tokens, (ttft_us / 1000000.0), prefill_per_second);
-
-        // calculate TPOT
-        decode_time_us = ((end.tv_sec - first_token.tv_sec) * 1000000) + (end.tv_usec - first_token.tv_usec);
-        tpot = (decode_time_us / 1000.0) / state.n_decode_tokens;
-        printf("TPOT: %.3f/%lu = %.3f ms\n", decode_time_us / 1000.0, state.n_decode_tokens, tpot);
-
-        // calculate TPS
-        tps = state.n_decode_tokens / (decode_time_us / 1000000.0);
-        printf("TPS: %lu/%.3f = %.3f tokens/s\n", state.n_decode_tokens, (decode_time_us / 1000000.0), tps);
-
-        // calculate total time
-        total_time = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
-        printf("Total time: %.3f s\n", total_time);
-
     }
-    
+
+    ret = rknn3_session_query_state(session, &state);
+    // if (ret == RKNN3_SUCCESS) {
+        
+    // }
 
     ret = rknn3_session_query_state(session, &state);
     if (ret != RKNN3_SUCCESS) {
         printf("[rknn3_model_stress_test_error] rknn3_session_query_state failed, ret=%d\n", ret);
         goto exit;
     }
-
-    #if 0
-    // calculate TTFT
-    ttft_us = (first_token.tv_sec - start.tv_sec) * 1000000 + (first_token.tv_usec - start.tv_usec);
-    printf("\nTTFT: %.3f s (%.3f ms)\n", ttft_us / 1000000.0, ttft_us / 1000.0);
-
-    // calculate Prefill
-    prefill_n_tokens = state.n_prefill_tokens;
-    prefill_per_second = prefill_n_tokens / (ttft_us / 1000000.0);
-    printf("Prefill: %d/%.3f = %.3f tokens/s\n", prefill_n_tokens, (ttft_us / 1000000.0), prefill_per_second);
-
-    // calculate TPOT
-    decode_time_us = ((end.tv_sec - first_token.tv_sec) * 1000000) + (end.tv_usec - first_token.tv_usec);
-    tpot = (decode_time_us / 1000.0) / state.n_decode_tokens;
-    printf("TPOT: %.3f/%lu = %.3f ms\n", decode_time_us / 1000.0, state.n_decode_tokens, tpot);
-
-    // calculate TPS
-    tps = state.n_decode_tokens / (decode_time_us / 1000000.0);
-    printf("TPS: %lu/%.3f = %.3f tokens/s\n", state.n_decode_tokens, (decode_time_us / 1000000.0), tps);
-
-    // calculate total time
-    total_time = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
-    printf("Total time: %.3f s\n", total_time);
-    
-    #endif
-    fflush(stdout);
      
-    printf("rknn3_session_power loop %d done \n", cnt_loop);
+    
 exit:
     if (session) {
         rknn3_session_destroy(session);
@@ -575,6 +550,57 @@ exit:
     }
 
     if(ret == 0) {
+        const char *last_slash = strrchr(model_path, '/');
+        const char *filename;
+
+        if (last_slash != NULL) {
+            filename = last_slash + 1;
+        } else {
+            filename = model_path;     
+        }
+
+        char model_name[256];
+        strncpy(model_name, filename, sizeof(model_name) - 1);
+        model_name[sizeof(model_name) - 1] = '\0';
+        char *last_dot = strrchr(model_name, '.');
+        if (last_dot != NULL) {
+            if (strcmp(last_dot, ".rknn") == 0) {
+                *last_dot = '\0';
+            }
+        }
+
+        // TTFT 计算
+        // ttft_us = (first_token.tv_sec - start.tv_sec) * 1000000 + (first_token.tv_usec - start.tv_usec);
+        float ttft_ms = first_token.get_time();
+        // first_token.print_time("TTFT: ");
+        // printf("\nTTFT: %.3f s (%.3f ms)\n", ttft_us / 1000000.0, ttft_us / 1000.0);
+
+        // Prefill 计算
+        prefill_n_tokens = state.n_prefill_tokens;
+        prefill_per_second = prefill_n_tokens / (ttft_ms / 1000.0);
+
+        // TPOT 计算
+        // decode_time_us = ((end.tv_sec - first_token.tv_sec) * 1000000) + (end.tv_usec - first_token.tv_usec);
+        if (state.n_decode_tokens > 0) {
+            tpot = decode_time_ms.get_time() / state.n_decode_tokens;
+            tps = state.n_decode_tokens / (decode_time_ms.get_time() / 1000.0);
+           
+        }
+
+        // 总时间
+        float final_total_time = (first_token.get_time() + decode_time_ms.get_time()) / 1000.0;
+       
+        printf("\n===== RKNN3_LLM_TEST 结果汇总 =====\n\n");
+        printf("RKNN3模型: %s\n",model_path);
+
+        printf("%s TTFT: %12.3f ms\n",model_name, ttft_ms);
+        printf("%s TPOT: %13.3f/%lu = %.3f (ms)\n", model_name,decode_time_ms.get_time(), state.n_decode_tokens, tpot);
+        printf("%s Prefill: %6d/%.3f = %.3f (tokens/s)\n",model_name, prefill_n_tokens, (ttft_ms/1000.f), prefill_per_second);
+        printf("%s TPS: %10lu/%.3f = %.3f (tokens/s)\n", model_name,state.n_decode_tokens, (decode_time_ms.get_time() / 1000.0), tps);
+        printf("%s 总耗时：%12.3f (ms)\n",model_name,infer_total_time);
+        printf("%s 总推理次数: %d\n",model_name,iter);
+        printf("\n=================================\n");
+        // printf("rknn3_llm_test loop: %d,total_time:%8.2f ms\n", iter,infer_total_time);
         printf("[rknn3_model_stress_test_done]\n");
     }
     fflush(stdout);
