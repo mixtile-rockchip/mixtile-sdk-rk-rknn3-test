@@ -35,6 +35,8 @@ int32_t gen_tokens = 0;
 int32_t first_tokens = 1;
 float tps = 0.f;
 TIMER vl_cost;
+TIMER infer_cost_time;
+int32_t infer_loop_cnt;
 int is_print_result = 1;
 struct embedding_info {
     int fd;
@@ -69,7 +71,7 @@ int result_callback(void *userdata, RKLLMResult *result, LLMCallState state) {
         llm_decode.tok();
         first_tokens = 1;
         tps = gen_tokens / llm_decode.get_time() * 1000.f;
-        gen_tokens = 0;
+        
         // printf("\n\n--------------------Finished-------------------- \n");
         return 0;
     } else if (state == RKLLM_RUN_WAITING) {
@@ -82,12 +84,17 @@ int result_callback(void *userdata, RKLLMResult *result, LLMCallState state) {
         printf("\n\n-----------------------Stop--------------------- \n");
         return 0;
     } else if (state == RKLLM_RUN_NORMAL) {
-        gen_tokens += 1;
+        
         if (first_tokens) {
             llm_decode.tik();
             llm_perfill.tok();
             vl_cost.tok();
             first_tokens = 0;
+            gen_tokens = 1;
+            
+        }
+        else {
+            gen_tokens += 1;
         }
         if (is_print_result) {
             if (result->num_tokens > 1) {
@@ -167,7 +174,9 @@ int main(int argc, char **argv) {
     char *tokenizer_path = NULL, *embedding_path = NULL;
     uint32_t vision_core_mask = 0, llm_core_mask = 0;
     char *img_path = NULL, *prompt_path = NULL;
-    uint32_t vision_loop = 1, llm_loop = 1,time_loop = 0, device_id = RKNN3_DEFAULT_DEVICE_ID;
+    uint32_t vision_loop = 1, llm_loop = 1;
+    float time_loop = 0.f;
+    uint32_t device_id = 0;
 
     for (int i = 1; i < argc; i += 2) {
         if (strcmp(argv[i], "-vm") == 0 || strcmp(argv[i], "--vision_model") == 0) {
@@ -195,10 +204,10 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "-ll") == 0 || strcmp(argv[i], "--llm_loop") == 0) {
             llm_loop = atoi(argv[i + 1]);
         } else if(strcmp(argv[i], "-tl") == 0 || strcmp(argv[i], "--time_loop") == 0) {
-            time_loop = atoi(argv[i + 1]);
+            time_loop = atof(argv[i + 1]);
         } else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0) {
             device_id = atoi(argv[i + 1]);
-        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+        }  else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv);
             return 0;
         }else {
@@ -233,7 +242,7 @@ int main(int argc, char **argv) {
     //     return -1;
     // }
 
-    if(time_loop != 0) {
+    if(time_loop != 0.f) {
         vision_loop = 1;
         llm_loop = 1;
     }
@@ -252,6 +261,8 @@ int main(int argc, char **argv) {
     const char *prompt_prefix = ini_get("prompt", "prompt_prefix", "");
     const char *prompt_postfix = ini_get("prompt", "prompt_postfix", "");
     int32_t print_result = ini_get_int("results", "print_result", 1);
+    int32_t pruned_model_width = ini_get_int("tensor", "pruned_model_width", 0);
+    int32_t pruned_model_height = ini_get_int("tensor", "pruned_model_height", 0);
 
     is_print_result = print_result;
 
@@ -283,7 +294,7 @@ int main(int argc, char **argv) {
     float16 *img_embeds;
 
     // LLM Multi Model Tensor
-    int n_inputs = 1;
+    // int n_inputs = 1;
     rknn3_llm_multimodal_tensor tensor;
     memset(&tensor, 0, sizeof(rknn3_llm_multimodal_tensor));
 
@@ -365,15 +376,20 @@ int main(int argc, char **argv) {
     strncpy(rknn_app_ctx.llm.prefix_prompt, prompt_prefix, strlen(prompt_prefix) - 1);
     strncpy(rknn_app_ctx.llm.postfix_prompt, prompt_postfix, strlen(prompt_postfix) - 1);
 
-    // printf("size :%d\n",sizeof(system_prompt));
+    rknn_app_ctx.vision.model_width = pruned_model_width;
+    rknn_app_ctx.vision.model_height = pruned_model_height;
+    rknn_app_ctx.vision.device_id = device_id;
+    rknn_app_ctx.llm.device_id = device_id;
+    
+    // printf("rknn_app_ctx.vision.model_width:%d\n",rknn_app_ctx.vision.model_width);
     // printf("==================================rknn_app_ctx.llm.system_prompt: %s,system_prompt:%s\n",rknn_app_ctx.llm.system_prompt,system_prompt);
     // printf("==================================rknn_app_ctx.llm.prefix_prompt: %s\n",rknn_app_ctx.llm.prefix_prompt);
-    ret = init_rknn3_vlm_model(&rknn_app_ctx, llm_model_path, llm_weight_path, vision_model_path, vision_weight_path, &params, n_params, callback, vision_core_mask, llm_core_mask, device_id);
+    ret = init_rknn3_vlm_model(&rknn_app_ctx, llm_model_path, llm_weight_path, vision_model_path, vision_weight_path, &params, n_params, callback, vision_core_mask, llm_core_mask);
     if (ret != 0) {
         printf("[rknn3_model_stress_test_error] init_rknn3_vlm_model fail! ret=%d llm_model_path=%s vision_model_path=%s\n", ret, llm_model_path, vision_model_path);
         goto out;
     }
-
+    
     // Image Embed
     for (size_t i = 0; i < rknn_app_ctx.vision.embeds_ndims; i++) {
         embed_elems *= rknn_app_ctx.vision.embeds_shape[i];
@@ -410,24 +426,42 @@ int main(int argc, char **argv) {
 
     // llm_perfill.tik();
     vl_cost.tik();
-    ret = inference_rknn3_vlm_model(&rknn_app_ctx, &src_image, img_embeds, tensor, n_inputs, vision_loop, llm_loop,time_loop);
+    ret = inference_rknn3_vlm_model(&rknn_app_ctx, &src_image, tensor, vision_loop, llm_loop,time_loop);
     if (ret != 0) {
         printf("[rknn3_model_stress_test_error] inference rknn3_vlm model fail! ret=%d\n", ret);
         goto out;
     }
 
-    if (is_print_result) {
-        printf("\n+------------------+--------------------+\n");
-        printf("| Stage            | Perf               |\n");
-        printf("+------------------+--------------------+\n");
-        printf("| %-16s | %-14.f(ms) |\n", "Vision", vision_cost.get_time());
-        // printf("| %-16s | %-10.d(tokens) |\n", "SeqLen",result->perf.prefill_tokens);
-        // printf("| %-16s | %-10.d(tokens) |\n", "GenLen",result->perf.generate_tokens);
-        // printf("| %-16s | %-8.3f(tokens/s) |\n", "Pefill",result->perf.prefill_tokens/result->perf.prefill_time_ms*1000.);
-        printf("| %-16s | %-14.3f(ms) |\n", "TTFT", llm_perfill.get_time());
-        printf("| %-16s | %-8.3f(tokens/s) |\n", "TPS", tps);
-        printf("+------------------+--------------------+\n");
+    {
+        const char *last_slash = strrchr(llm_model_path, '/');
+        const char *filename;
+
+        if (last_slash != NULL) {
+            filename = last_slash + 1;
+        } else {
+            filename = llm_model_path;     
+        }
+
+        char model_name[256];
+        strncpy(model_name, filename, sizeof(model_name) - 1);
+        model_name[sizeof(model_name) - 1] = '\0';
+        char *last_dot = strrchr(model_name, '-');
+        if (last_dot != NULL) {
+            if (strcmp(last_dot, "-llm.rknn") == 0) {
+                *last_dot = '\0';
+            }
+        }
+        printf("\n===== RKNN3_VLM_TEST 结果汇总 =====\n\n");
+        printf("RK1820 deviceID: %s\n",rknn_app_ctx.llm.device_mac);
+        printf("RKNN3模型: %s\n",model_name);
+        printf("%s 总耗时：%12.3f (ms)\n",model_name,infer_cost_time.get_time());
+        printf("%s 总推理次数: %d\n",model_name,infer_loop_cnt);
+        printf("\n=================================\n");
+
+
     }
+    
+
 
 out:
     ret = release_rknn3_vlm_model(&rknn_app_ctx);

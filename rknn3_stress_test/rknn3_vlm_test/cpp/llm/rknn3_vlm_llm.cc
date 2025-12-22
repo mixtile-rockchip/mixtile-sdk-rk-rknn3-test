@@ -20,7 +20,7 @@
 #include "rknn3_vlm_llm.h"
 extern TIMER llm_perfill,llm_decode;
 
-int init_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, const char* model_path, const char* weight_path, rknn3_llm_param* params, int n_params, RKLLMCallback callback, uint32_t core_mask, uint32_t device_id)
+int init_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, const char* model_path, const char* weight_path, rknn3_llm_param* params, int n_params, RKLLMCallback callback, uint32_t core_mask)
 {
     int ret;
     rknn3_context  ctx     = 0;
@@ -40,16 +40,17 @@ int init_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, const char* model_path, c
         return ret;
     }
 
-    if (device_id >= rknn3_devices.n_devices) {
-        printf("warning!!! device_id = %d is not allow ,use default:%d, %s, %d\n", device_id, RKNN3_DEFAULT_DEVICE_ID, __FUNCTION__, __LINE__);
-        device_id = RKNN3_DEFAULT_DEVICE_ID;
+    if (llm_ctx->device_id >= rknn3_devices.n_devices) {
+        printf("warning!!! device_id = %d is not allow ,use default:%d, %s, %d\n", llm_ctx->device_id, RKNN3_DEFAULT_DEVICE_ID, __FUNCTION__, __LINE__);
+        llm_ctx->device_id = RKNN3_DEFAULT_DEVICE_ID;
     }
 
-    printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
+    printf("[rknn3_stress_test_log] device[%d].id=%s\n", llm_ctx->device_id, rknn3_devices.devices[llm_ctx->device_id].id);
 
     rknn3_init_extend init_extend = {0};
-    init_extend.device_id = rknn3_devices.devices[device_id].id;
-
+    init_extend.device_id = rknn3_devices.devices[llm_ctx->device_id].id;
+    memcpy(llm_ctx->device_mac,rknn3_devices.devices[llm_ctx->device_id].id,sizeof(rknn3_devices.devices[llm_ctx->device_id].id));
+    // llm_ctx->device_mac = rknn3_devices.devices[llm_ctx->device_id].id;
     // RKNN Init
     ret = rknn3_init(&ctx, &init_extend);
     if (ret < 0)
@@ -94,6 +95,7 @@ int init_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, const char* model_path, c
         printf("[rknn3_model_stress_test_error] Failed to set callback\n");
         return -1;
     }
+
 
     // Set to context
     llm_ctx->rknn_ctx = ctx;
@@ -140,10 +142,17 @@ int inference_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, rknn3_llm_multimodal
     inputs[0].input_type = RKNN3_LLM_INPUT_MULTIMODAL;
     inputs[0].multimodal_input = tensor;
 
-    int prefill_n_tokens = 0;
-    int32_t need_tokens_len = 256;
+    // int prefill_n_tokens = 0;
+    // int32_t need_tokens_len = 256;
     for(int i = 0;i < loop;i ++) {
         llm_perfill.tik();
+        if(n_inputs > 1) {
+            for (int i = 1; i < n_inputs; ++i)
+            {
+                inputs[i].input_type = RKNN3_LLM_INPUT_AUX;
+                inputs[i].aux_input  = llm_ctx->deepstack_tensor[i-1];
+            }
+        }
         ret = rknn3_session_run(llm_ctx->rknn_sess, inputs, n_inputs, &llm_infer_param);
         if (ret < 0)
         {
@@ -162,6 +171,5 @@ int inference_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, rknn3_llm_multimodal
         }
     }
     
-
     return ret;
 }

@@ -20,11 +20,9 @@
 #include "common.h"
 #include "easy_timer.h"
 
-#define MODEL_WIDTH 392 // 由于vision模型被裁剪了，需要手动添加这些参数配置
-#define MODEL_HEIGHT 392
-
+#define MODEL_WIDTH 384 // 由于vision模型被裁剪了，需要手动添加这些参数配置
+#define MODEL_HEIGHT 384
 #define RKNN3_DEFAULT_DEVICE_ID 0
-
 extern TIMER vision_cost;
 
 typedef struct {
@@ -40,12 +38,13 @@ typedef struct {
     uint32_t* embeds_shape;
     uint32_t embeds_ndims;
     int pruned_version_flag;
+    uint32_t device_id;
 } rknn3_vlm_vision_context;
 
-int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask, uint32_t device_id);
+int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask);
 
 int release_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx);
 
-int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffer_t* img, float16* img_embeds,int loop);
+int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffer_t* img, int loop);
 
 #endif //_RKNN_DEMO__RKNN3_VLM_VISION_UTILS_H_

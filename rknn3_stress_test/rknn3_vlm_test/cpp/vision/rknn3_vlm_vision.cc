@@ -48,7 +48,7 @@ static void dump_tensor_attr(rknn3_tensor_attr* attrs)
 }
 
 
-int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask, uint32_t device_id)
+int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask)
 {
     int ret;
     rknn3_context ctx = 0;
@@ -56,7 +56,7 @@ int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* mode
     memset(&config, 0, sizeof(config));
     config.run_core_mask = core_mask;
     config.user_mem_internal = 1; // 使用用户管理的internal内存
-
+    uint32_t device_id = vision_ctx->device_id;
     // 获取目前连接的RK182X信息
     rknn3_devices rknn3_devices;
     memset(&rknn3_devices, 0 ,sizeof(rknn3_devices));
@@ -178,8 +178,8 @@ int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* mode
     {
         vision_ctx->pruned_version_flag = 1;
         vision_ctx->model_channel = 3;
-        vision_ctx->model_width = MODEL_WIDTH;
-        vision_ctx->model_height = MODEL_HEIGHT;
+        // vision_ctx->model_width = MODEL_WIDTH;
+        // vision_ctx->model_height = MODEL_HEIGHT;
         // 由于vision模型被裁剪了，需要手动添加这些参数配置
         printf("model is UNDEFINED!\n");
         printf("model_width=%d model_height=%d \n", vision_ctx->model_width,vision_ctx->model_height);
@@ -263,6 +263,53 @@ void normalize_and_to_nchw(const unsigned char *src, float16 *dst, int width, in
     free(temp_nhwc);
 }
 
+void transpose_qwen3(float16 *in, float16 *out, int model_width, int model_height) {
+    int64_t dims[8] = {2,3,int(model_height/32),2,16,int(model_width/32),2,16};    
+    //[temporal_patch_size,channel, grid_h // merge_size,  merge_size, patch_size, 
+    // grid_w // merge_size, merge_size, patch_size]
+     int perm[8] = {2, 5, 3, 6, 1, 0, 4, 7};
+    int64_t new_dims[8];
+    for (int k = 0; k < 8; k++) {
+        new_dims[k] = dims[perm[k]];
+    }
+    int64_t total = 1;
+    for (int k = 0; k < 8; k++) {
+        total *= dims[k];
+    }
+    // 计算原始strides
+    int64_t strides[8];
+    strides[7] = 1;
+    for (int d = 6; d >= 0; d--) {
+        strides[d] = strides[d + 1] * dims[d + 1];
+    }
+
+    // 使用嵌套循环遍历输出索引，避免内循环计算
+    int64_t out_idx = 0;
+    for (int64_t o0 = 0; o0 < new_dims[0]; o0++) {
+    for (int64_t o1 = 0; o1 < new_dims[1]; o1++) {
+    for (int64_t o2 = 0; o2 < new_dims[2]; o2++) {
+    for (int64_t o3 = 0; o3 < new_dims[3]; o3++) {
+    for (int64_t o4 = 0; o4 < new_dims[4]; o4++) {
+    for (int64_t o5 = 0; o5 < new_dims[5]; o5++) {
+    for (int64_t o6 = 0; o6 < new_dims[6]; o6++) {
+    for (int64_t o7 = 0; o7 < new_dims[7]; o7++) {
+        int64_t i[8];
+        i[perm[0]] = o0;
+        i[perm[1]] = o1;
+        i[perm[2]] = o2;
+        i[perm[3]] = o3;
+        i[perm[4]] = o4;
+        i[perm[5]] = o5;
+        i[perm[6]] = o6;
+        i[perm[7]] = o7;
+        int64_t flat_in = i[0] * strides[0] + i[1] * strides[1] + i[2] * strides[2] +
+                          i[3] * strides[3] + i[4] * strides[4] + i[5] * strides[5] +
+                          i[6] * strides[6] + i[7] * strides[7];
+        out[out_idx++] = in[flat_in];
+    }}}}}}}}
+}
+
+
 void transpose(float16 *in, float16 *out) {
     int64_t dims[8] = {2,3,14,2,14,14,2,14};
     int perm[8] = {2, 5, 3, 6, 1, 0, 4, 7};
@@ -307,7 +354,7 @@ void transpose(float16 *in, float16 *out) {
     }}}}}}}}
 }
 
-int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffer_t* img, float16* img_embeds,int loop)
+int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffer_t* img, int loop)
 {
     if ((!vision_ctx) || (!img))
     {
@@ -339,13 +386,19 @@ int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffe
         printf("[rknn3_model_stress_test_error] convert_image fail! ret=%d\n", ret);
         goto out;
     }
-
+    
     if(vision_ctx->pruned_version_flag == 1) {
         expand_data = (float16*)malloc(dst_img.size * 2 * sizeof(float16)); //expand
         normalize_and_to_nchw(dst_img.virt_addr, expand_data, vision_ctx->model_width, vision_ctx->model_height);
         memcpy((char *)expand_data + dst_img.size * 2 , expand_data, dst_img.size * 2); //expand
-        transpose((float16 *)expand_data, (float16 *)(vision_ctx->inputs[0].mem->virt_addr));
+        if(vision_ctx->io_num.n_output > 1) {
+            transpose_qwen3((float16 *)expand_data, (float16 *)(vision_ctx->inputs[0].mem->virt_addr),vision_ctx->model_width, vision_ctx->model_height);
+        }
+        else {
+            transpose((float16 *)expand_data, (float16 *)(vision_ctx->inputs[0].mem->virt_addr));
+        }
         free(expand_data);
+        // printf("vision_ctx->pruned_version_flag\n");
     } else {
         // Set Input Data
         memcpy(vision_ctx->inputs[0].mem->virt_addr, (uint8_t*)dst_img.virt_addr, dst_img.size);
@@ -355,6 +408,17 @@ int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffe
     // printf("rknn_run\n");
     for(int i = 0;i < loop;i ++) {
         vision_cost.tik();
+        for (int i = 0; i < vision_ctx->io_num.n_input; i++)
+        {
+            // printf("Syncing input[%d] to device...\n", i);
+            ret = rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->inputs[i].mem, RKNN3_MEMORY_SYNC_TO_DEVICE);
+            if (ret != RKNN3_SUCCESS)
+            {
+                printf("rknn3_mem_sync input[%d] failed! ret=%d\n", i, ret);
+                break;
+            }
+        }
+
         ret = rknn3_run(vision_ctx->rknn_ctx, vision_ctx->inputs, vision_ctx->io_num.n_input, vision_ctx->outputs, vision_ctx->io_num.n_output);
         if (ret < 0)
         {
@@ -363,12 +427,25 @@ int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffe
         }
         vision_cost.tok();
         if(loop != 1) {
-            printf("[rknn3_model_stress_test_error] vision run: %d/ %d\n",i+1,loop);
-        } 
+            printf("[rknn3_model_stress_test_log] vision run: %d/ %d\n",i+1,loop);
+        }
+        for (int i = 0; i < vision_ctx->io_num.n_output; i++)
+        {
+            // printf("Syncing output[%d] from device...\n", i);
+            rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
+            if (ret != RKNN3_SUCCESS)
+            {
+                printf("rknn3_mem_sync output[%d] failed! ret=%d\n", i, ret);
+                break;
+            }
+        }
     }
     
     // Get Output
-    memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr, vision_ctx->outputs[0].mem->size);
+    // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr, vision_ctx->outputs[0].mem->size);
+    // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr, vision_ctx->outputs[0].mem->size);
+    // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr, vision_ctx->outputs[0].mem->size);
+    // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr, vision_ctx->outputs[0].mem->size);
 
 out:
     if (dst_img.virt_addr != NULL)

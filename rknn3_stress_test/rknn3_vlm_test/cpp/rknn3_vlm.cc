@@ -22,7 +22,6 @@
 // #include "rknn_api.h"
 #include <math.h>
 
-
 int init_internal_share(rknn_app_context_t* app_ctx, uint32_t core_mask_vision, uint32_t core_mask_llm)
 {
     int ret = -1;
@@ -173,12 +172,20 @@ int release_internal_share(rknn_app_context_t* app_ctx)
 }
 
 
-int init_rknn3_vlm_model(rknn_app_context_t* app_ctx, const char* llm_model_path, const char* llm_weight_path, const char* vision_model_path, const char* vision_weight_path, rknn3_llm_param* params, int n_params, RKLLMCallback callback, uint32_t vision_core_mask, uint32_t llm_core_mask, uint32_t device_id)
+int init_rknn3_vlm_model(rknn_app_context_t* app_ctx,
+                        const char* llm_model_path,
+                        const char* llm_weight_path,
+                        const char* vision_model_path,
+                        const char* vision_weight_path,
+                        rknn3_llm_param* params, int n_params,
+                        RKLLMCallback callback, 
+                        uint32_t vision_core_mask,
+                        uint32_t llm_core_mask)
 {
     int ret = 0;
 
     printf("--> init rknn3_vlm vision model\n");
-    ret = init_rknn3_vlm_vision(&(app_ctx->vision), vision_model_path, vision_weight_path, vision_core_mask, device_id);
+    ret = init_rknn3_vlm_vision(&(app_ctx->vision), vision_model_path, vision_weight_path, vision_core_mask);
     if (ret < 0)
     {
         printf("rknn_init rknn3_vlm vision model fail! ret=%d\n", ret);
@@ -186,13 +193,34 @@ int init_rknn3_vlm_model(rknn_app_context_t* app_ctx, const char* llm_model_path
     }
 
     printf("--> init rknn3_vlm llm model\n");
-    ret = init_rknn3_vlm_llm(&(app_ctx->llm), llm_model_path, llm_weight_path, params, n_params, callback, llm_core_mask, device_id);
+    ret = init_rknn3_vlm_llm(&(app_ctx->llm), llm_model_path, llm_weight_path, params, n_params, callback, llm_core_mask);
     if (ret < 0)
     {
         printf("rknn_init rknn3_vlm llm model fail! ret=%d\n", ret);
         return ret;
     }
 
+    if(app_ctx->vision.io_num.n_output > 1) {
+        rknn3_tensor_attr deepstack_attrs[3];
+        for(int i = 0; i < 3; i++) {
+            int32_t deepstack_aligned_size = app_ctx->vision.outputs[i].attr->aligned_size;
+            printf("deepstack_aligned_size = %d \n", deepstack_aligned_size);
+
+            deepstack_attrs[i].index = 2 + i; //deepstack的index为2、3、 4,可以通过rknn3_query查询所有input_attrs定位到deepstack的index
+            ret = rknn3_query(app_ctx->llm.rknn_ctx, RKNN3_QUERY_INPUT_ATTR, &(deepstack_attrs[i]), sizeof(rknn3_tensor_attr));
+            if (ret < 0) {
+            printf("rknn_query fail! ret=%d\n", ret);
+            return -1;
+            }
+
+            app_ctx->llm.deepstack_tensor[i].mem = rknn3_create_mem(app_ctx->llm.rknn_ctx, deepstack_aligned_size, deepstack_attrs[i].core_id, RKNN3_FLAG_MEMORY_CACHEABLE);
+            if (!app_ctx->llm.deepstack_tensor[i].mem) {
+            printf("fail to create aux_input_tensor.mem!\n");
+            return -1;
+            }
+        }
+    }
+    
     printf("--> init internal share\n");
     ret = init_internal_share(app_ctx, vision_core_mask, llm_core_mask);
     if (ret < 0)
@@ -207,8 +235,18 @@ int init_rknn3_vlm_model(rknn_app_context_t* app_ctx, const char* llm_model_path
 int release_rknn3_vlm_model(rknn_app_context_t* app_ctx)
 {
     release_internal_share(app_ctx);
+    if(app_ctx->vision.io_num.n_output > 1) {
+        for(int i = 0; i < 3; i++) {
+            if (app_ctx->llm.deepstack_tensor[i].mem) {
+                rknn3_destroy_mem(app_ctx->llm.rknn_ctx, app_ctx->llm.deepstack_tensor[i].mem);
+                // rknn3_destroy_mem(llm_ctx->rknn_ctx, llm_ctx->deepstack_tensor[i].mem);
+                app_ctx->llm.deepstack_tensor[i].mem = nullptr;
+            }   
+        }
+    }
     release_rknn3_vlm_vision(&(app_ctx->vision));
     release_rknn3_vlm_llm(&(app_ctx->llm));
+
     return 0;
 }
 
@@ -244,9 +282,7 @@ void check_perfance(float last_perf, float cur_perf) {
 
 int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx, 
                                 image_buffer_t* img,
-                                float16* img_embeds,
                                 rknn3_llm_multimodal_tensor tensor,
-                                int n_inputs,
                                 int vision_loop,
                                 int llm_loop,
                                 int time_loop)
@@ -262,6 +298,10 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
     static float last_ttft = 0.f;
     static float last_tps = 0.f;
 
+    int acc_cnt = 0;
+    float acc_ms = 0.f;
+    TIMER one_infer_time;
+    #if 0
     // int32_t is_time_loop_mode = 0;
     if(time_loop != 0) {
         float time_loop_ms = (float)time_loop *60.*60.*1000.;
@@ -299,17 +339,6 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                 last_ttft = llm_perfill.get_time();
                 last_tps = tps;
             }
-            // printf("\n+------------------+--------------------+\n");
-            // printf("| Stage            | Perf               |\n");
-            // printf("+------------------+--------------------+\n");
-            // printf("| %-16s | %-14.f(ms) |\n", "Vision", vision_cost.get_time());
-            // // printf("| %-16s | %-10.d(tokens) |\n", "SeqLen",result->perf.prefill_tokens);
-            // // printf("| %-16s | %-10.d(tokens) |\n", "GenLen",result->perf.generate_tokens);
-            // // printf("| %-16s | %-8.3f(tokens/s) |\n", "Pefill",result->perf.prefill_tokens/result->perf.prefill_time_ms*1000.);
-            // printf("| %-16s | %-14.3f(ms) |\n", "TTFT", llm_perfill.get_time());
-            // printf("| %-16s | %-8.3f(tokens/s) |\n", "TPS", tps);
-            // printf("+------------------+--------------------+\n");
-            
         }
     } else  {
         // printf("--> inference rknn3_vlm vision model\n");
@@ -359,8 +388,103 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
 
 
     }
+    #else
+
+    bool is_time_mode = (time_loop != 0);
+    bool is_equal_loop = (vision_loop == llm_loop);
+    float time_limit_ms = is_time_mode ? (float)time_loop * 3600.0f * 1000.0f : 0;
+    int max_iters = (!is_time_mode && is_equal_loop) ? vision_loop : 1;
+    uint32_t n_inputs = app_ctx->vision.io_num.n_output;
+    
+    if (!is_time_mode && !is_equal_loop) {
+        ret = inference_rknn3_vlm_vision(&(app_ctx->vision), img, vision_loop);
+        if (ret == 0) {
+            
+            ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs, llm_loop);
+        }
+        if (ret != 0) {
+            printf("[rknn3_model_stress_test_error] inference fail! ret=%d\n", ret);
+            return ret;
+        }
+    } else {
+        
+        infer_cost_time.tik();
+        int iter = 0;
+
+        while (true) {
+            one_infer_time.tik();
+            ret = inference_rknn3_vlm_vision(&(app_ctx->vision), img, 1);
+            if (ret == 0) {
+                memcpy(tensor.image.image_embed, (float16*)app_ctx->vision.outputs[0].mem->virt_addr, app_ctx->vision.outputs[0].mem->size);
+
+                if(app_ctx->vision.io_num.n_output > 1) {
+                    memcpy((uint8_t*)app_ctx->llm.deepstack_tensor[0].mem->virt_addr, (uint8_t*)app_ctx->vision.outputs[1].mem->virt_addr, app_ctx->vision.outputs[1].mem->size);
+                    memcpy((uint8_t*)app_ctx->llm.deepstack_tensor[1].mem->virt_addr, (uint8_t*)app_ctx->vision.outputs[2].mem->virt_addr, app_ctx->vision.outputs[2].mem->size);
+                    memcpy((uint8_t*)app_ctx->llm.deepstack_tensor[2].mem->virt_addr, (uint8_t*)app_ctx->vision.outputs[3].mem->virt_addr, app_ctx->vision.outputs[3].mem->size);
+                }
+            // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr, vision_ctx->outputs[0].mem->size);
+
+                ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs, 1);
+            }
+            
+            if (ret != 0) {
+                printf("[rknn3_model_stress_test_error] inference fail! ret=%d\n", ret);
+                return ret;
+            }
+
+            iter++;
+            infer_loop_cnt = iter;
+            infer_cost_time.tok();
+            float current_total_ms = infer_cost_time.get_time();
+            one_infer_time.tok();
+            // if (!is_time_mode) {
+            //     printf("\n vlm run: %d/%d\n", iter, vision_loop);
+            // } 
+            // else {
+            //     infer_cost_time.print_time("cost_time:");
+            // } 
+            acc_cnt += 1;
+            acc_ms += one_infer_time.get_time();
+            if(acc_cnt >= 100) {
+                printf("run_cnt diff: %d, run cost: %8.2f ms \n",acc_cnt,acc_ms);
+                acc_cnt = 0;
+                acc_ms = 0.0f;
+            }
+
+
+            if (last_vision_cost != 0.f && iter > 10) {
+                check_perfance(last_vision_cost, vision_cost.get_time());
+                check_perfance(last_ttft, llm_perfill.get_time());
+                check_perfance(last_tps, tps);
+                
+                last_vision_cost = vision_cost.get_time();
+                last_ttft = llm_perfill.get_time();
+                last_tps = tps;
+            }
+            if (is_time_mode) {
+                if (current_total_ms >= time_limit_ms) 
+                    break;
+            } else {
+                if (iter >= max_iters) 
+                    break;
+            }
+        }
+    }
+
+    #endif
     
     if(ret == 0) {
+        
+        printf("\n+------------------+--------------------+\n");
+        printf("| Stage            | Perf               |\n");
+        printf("+------------------+--------------------+\n");
+        printf("| %-16s | %-14.f(ms) |\n", "Vision", vision_cost.get_time());
+        // printf("| %-16s | %-10.d(tokens) |\n", "SeqLen",result->perf.prefill_tokens);
+        printf("| %-16s | %-10.d(tokens) |\n", "GenLen",gen_tokens);
+        // printf("| %-16s | %-8.3f(tokens/s) |\n", "Pefill",result->perf.prefill_tokens/result->perf.prefill_time_ms*1000.);
+        printf("| %-16s | %-14.3f(ms) |\n", "TTFT", llm_perfill.get_time());
+        printf("| %-16s | %-8.3f(tokens/s) |\n", "TPS", tps);
+        printf("+------------------+--------------------+\n");
         printf("[rknn3_model_stress_test_done] rknn3_vlm_demo run done\n");
     }
     
