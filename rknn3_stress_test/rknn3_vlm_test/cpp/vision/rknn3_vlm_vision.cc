@@ -365,14 +365,14 @@ int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffe
     image_buffer_t dst_img;
     float16* expand_data;
     memset(&dst_img, 0, sizeof(image_buffer_t));
-
+    float tot_cost = 0.f;
     // Pre Process
     dst_img.width     = vision_ctx->model_width;
     dst_img.height    = vision_ctx->model_height;
     dst_img.format    = IMAGE_FORMAT_RGB888;
     dst_img.size      = get_image_size(&dst_img);
     dst_img.virt_addr = (unsigned char *)malloc(dst_img.size);
-
+    TIMER sync_in_time,sync_out_time;
 
     if (dst_img.virt_addr == NULL)
     {
@@ -406,38 +406,49 @@ int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffe
     
     // Run
     // printf("rknn_run\n");
+    
     for(int i = 0;i < loop;i ++) {
         vision_cost.tik();
-        for (int i = 0; i < vision_ctx->io_num.n_input; i++)
+        // printf("vision_ctx->io_num.n_input:%d\n",vision_ctx->io_num.n_input);
+        sync_in_time.tik();
+        for (int j = 0; j < vision_ctx->io_num.n_input; j++)
         {
             // printf("Syncing input[%d] to device...\n", i);
-            ret = rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->inputs[i].mem, RKNN3_MEMORY_SYNC_TO_DEVICE);
+            ret = rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->inputs[j].mem, RKNN3_MEMORY_SYNC_TO_DEVICE);
             if (ret != RKNN3_SUCCESS)
             {
                 printf("rknn3_mem_sync input[%d] failed! ret=%d\n", i, ret);
                 break;
             }
         }
-
+        sync_in_time.tok();
         ret = rknn3_run(vision_ctx->rknn_ctx, vision_ctx->inputs, vision_ctx->io_num.n_input, vision_ctx->outputs, vision_ctx->io_num.n_output);
         if (ret < 0)
         {
             printf("[rknn3_model_stress_test_error] rknn_run fail! ret=%d\n", ret);
             goto out;
         }
-        vision_cost.tok();
-        if(loop != 1) {
-            printf("[rknn3_model_stress_test_log] vision run: %d/ %d\n",i+1,loop);
-        }
-        for (int i = 0; i < vision_ctx->io_num.n_output; i++)
+        sync_out_time.tik();
+        for (int j = 0; j < vision_ctx->io_num.n_output; j++)
         {
             // printf("Syncing output[%d] from device...\n", i);
-            rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
+            rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->outputs[j].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
             if (ret != RKNN3_SUCCESS)
             {
                 printf("rknn3_mem_sync output[%d] failed! ret=%d\n", i, ret);
                 break;
             }
+        }
+        sync_out_time.tok();
+        vision_cost.tok();
+        tot_cost += vision_cost.get_time();
+        if(loop != 1) {
+            if(i %100 == 0) {
+                printf("run: %d, cost: %f,sync_in: %f,sync_out: %f\n",i+1,tot_cost,sync_in_time.get_time(),sync_out_time.get_time());
+                tot_cost = 0.f;
+            }
+            // printf("[rknn3_model_stress_test_log] vision run: %d/ %d\n",i+1,loop);
+            
         }
     }
     

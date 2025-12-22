@@ -189,7 +189,7 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
         extend.device_id = devs.devices[0].id;
         printf("[rknn3_stress_test_log] Using first device ID: %s\n", extend.device_id);
     } 
-
+    // memcpy(device_id_mac,)
     ret = rknn3_init(&ctx, &extend);
     if (ret < 0) {
         printf("[rknn3_model_stress_test_error] rknn3_init fail! ret=%d\n", ret);
@@ -295,20 +295,21 @@ static void check_perfance(float last_perf, float cur_perf) {
     }
 }
 
-
+#define RKNN3_DEFAULT_DEVICE_ID 0
 int main(int argc, char **argv) {
     int ret = 0;
     char *model_path = NULL;
     char *weight_path =  NULL;
     const char *tokenizer_path =  NULL;
     const char *embedding_path =  NULL;
-    const char *device_id = NULL; 
+    // const char *device_id = NULL; 
     int32_t max_context_len =  NULL;
     uint64_t n_input_tokens = 128;
     int32_t max_new_tokens = 128;
     uint32_t core_mask = 0xff;
     uint32_t cnt_loop = 1;
     float time_loop = 0.f;
+    uint32_t device_id = 0;
 
      for (int i = 1; i < argc; i += 2) {
         if (strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--model_path") == 0) {
@@ -331,8 +332,8 @@ int main(int argc, char **argv) {
             n_input_tokens = atoi(argv[i+1]);
         }else if (strcmp(argv[i], "-no") == 0 || strcmp(argv[i], "--max_new_tokens") == 0){
             max_new_tokens = atoi(argv[i+1]);
-        } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--device_id") == 0){
-            device_id = argv[i+1];  // 指定设备ID
+        } else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0){
+            device_id = atoi(argv[i+1]);  // 指定设备ID
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv);
             return 0;
@@ -391,8 +392,29 @@ int main(int argc, char **argv) {
 
     printf("*******************************RKNN3_LLM_TEST**********************************\n");
 
+    // uint32_t device_id = vision_ctx->device_id;
+    // 获取目前连接的RK182X信息
+    rknn3_devices rknn3_devices;
+    memset(&rknn3_devices, 0 ,sizeof(rknn3_devices));
+    ret = rknn3_find_devices(&rknn3_devices);
+    if (ret != RKNN3_SUCCESS || rknn3_devices.n_devices <= 0) {
+        printf("find devices failed, or data is invalid: %d\n", ret);
+        return ret;
+    }
+
+    if (device_id >= rknn3_devices.n_devices) {
+        printf("warning!!! device_id = %d is not allow ,use default:%d, %s, %d\n", device_id, RKNN3_DEFAULT_DEVICE_ID, __FUNCTION__, __LINE__);
+        device_id = RKNN3_DEFAULT_DEVICE_ID;
+    }
+
+    printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
+
+    rknn3_init_extend init_extend = {0};
+    init_extend.device_id = rknn3_devices.devices[device_id].id;
+    char device_id_mac[128];
+    memcpy(device_id_mac,rknn3_devices.devices[device_id].id,sizeof(rknn3_devices.devices[device_id].id));
     // init context and model
-    ctx = init_context_and_model(model_path, weight_path, core_mask, device_id);
+    ctx = init_context_and_model(model_path, weight_path, core_mask, device_id_mac);
     if (ctx < 0) {
         printf("[rknn3_model_stress_test_error] rknn3_session_init_model fail! ctx=%lu\n", ctx);
         goto exit;
@@ -586,13 +608,13 @@ exit:
             tps = state.n_decode_tokens / (decode_time_ms.get_time() / 1000.0);
            
         }
-
+        printf("[rknn3_model_stress_test_done]\n");
         // 总时间
         float final_total_time = (first_token.get_time() + decode_time_ms.get_time()) / 1000.0;
        
         printf("\n===== RKNN3_LLM_TEST 结果汇总 =====\n\n");
-        printf("RKNN3模型: %s\n",model_path);
-
+        printf("RKNN3模型: %s\n",model_name);
+        printf("%s RK1820 deviceID: %s\n",model_name,device_id_mac);
         printf("%s TTFT: %12.3f ms\n",model_name, ttft_ms);
         printf("%s TPOT: %13.3f/%lu = %.3f (ms)\n", model_name,decode_time_ms.get_time(), state.n_decode_tokens, tpot);
         printf("%s Prefill: %6d/%.3f = %.3f (tokens/s)\n",model_name, prefill_n_tokens, (ttft_ms/1000.f), prefill_per_second);
@@ -601,7 +623,7 @@ exit:
         printf("%s 总推理次数: %d\n",model_name,iter);
         printf("\n=================================\n");
         // printf("rknn3_llm_test loop: %d,total_time:%8.2f ms\n", iter,infer_total_time);
-        printf("[rknn3_model_stress_test_done]\n");
+        // printf("[rknn3_model_stress_test_done]\n");
     }
     fflush(stdout);
 

@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+// #include "easy_timer.h"
 
 #include "rknn3_vlm_llm.h"
 extern TIMER llm_perfill,llm_decode;

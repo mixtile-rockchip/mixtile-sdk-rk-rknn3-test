@@ -34,9 +34,6 @@ add_executable(${PROJECT_NAME}
     main.cpp
     rknn3_cnn_test.cpp
     cnpy.cpp
-    # fastvlm.cc
-    # ${llm_file}
-    # ${vision_file}
 )
 
 target_link_libraries(${PROJECT_NAME}
@@ -66,6 +63,5 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 )
 
 install(TARGETS ${PROJECT_NAME} DESTINATION .)
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../data/demo.jpg DESTINATION ./model)
-file(GLOB RKNN_FILES "${CMAKE_CURRENT_SOURCE_DIR}/../model/*/*.rknn")
-file(GLOB WEIGHT_FILES "${CMAKE_CURRENT_SOURCE_DIR}/../model/*/*.weight")
+# install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../data/demo.jpg DESTINATION ./model)
+

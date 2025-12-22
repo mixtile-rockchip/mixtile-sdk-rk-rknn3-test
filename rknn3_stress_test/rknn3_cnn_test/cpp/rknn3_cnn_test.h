@@ -32,6 +32,8 @@ typedef struct {
 
     uint32_t* embeds_shape;
     uint32_t embeds_ndims;
+
+    char device_id_mac[128];
 } rknn_common_img_ctx;
 
 int init_common_img(rknn_common_img_ctx* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask,uint32_t device_id);

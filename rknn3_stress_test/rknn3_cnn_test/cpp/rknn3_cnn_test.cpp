@@ -73,7 +73,7 @@ int init_common_img(rknn_common_img_ctx* vision_ctx, const char* model_path, con
         printf("warning!!! device_id = %d is not allow ,use default:%d, %s, %d\n", device_id, RKNN3_DEFAULT_DEVICE_ID, __FUNCTION__, __LINE__);
         device_id = RKNN3_DEFAULT_DEVICE_ID;
     }
-
+    memcpy(vision_ctx->device_id_mac,rknn3_devices.devices[device_id].id,sizeof(rknn3_devices.devices[device_id].id));
     printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
 
     rknn3_init_extend init_extend = {0};
@@ -391,6 +391,12 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
     image_buffer_t dst_img;
     memset(&dst_img, 0, sizeof(image_buffer_t));
 
+    int infer_cnt = 1;
+    TIMER tot_cost;
+    static float last_print_time = 0.0f;
+    float print_interval = 1*1000*60 ; //1ms
+    float time_loop_ms = (float)time_loop *60.f*60.f*1000.f;
+
     // Pre Process
     dst_img.width     = vision_ctx->model_width;
     dst_img.height    = vision_ctx->model_height;
@@ -412,7 +418,7 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
 
     // Set Input Data
     memcpy(vision_ctx->inputs[0].mem->virt_addr, (uint8_t*)dst_img.virt_addr, dst_img.size);
-    
+    #if 0
     if(time_loop != 0.f) {
         float time_loop_ms = (float)time_loop *60.f*60.f*1000.f;
         // printf("time_loop_ms: %f\n",time_loop_ms);
@@ -424,6 +430,7 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
         tot_cost.tik();
         static float last_print_time = 0.0f;
         float print_interval = 1*1000*60 ; //1ms
+        
         while(1) {
             // printf("---------------------test_by_cdd\n");
             for (int i = 0; i < vision_ctx->io_num.n_input; i++)
@@ -467,6 +474,7 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
             if(tmp_time >= time_loop_ms) {
                 float avgCost = tmp_time / infer_cnt;
                 float avgFPS = 1000. / avgCost;
+                printf("device_id: %s\n",vision_ctx->device_id_mac);
                 printf("run %d ,tot_time:%8.2f,avgFPS: %.2f ,avgCost = %8.2f ms\n",infer_cnt,tmp_time,avgFPS,avgCost);
                 break;
             }
@@ -528,6 +536,67 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
         printf("run %d ,tot_time:%8.2f,avgFPS: %.2f ,avgCost = %8.2f ms\n",cnt_loop,tot_cost,avgFPS,avgCost);
         
     }
+        #endif
+
+    tot_cost.tik();
+    while (1) {
+        if (time_loop == 0.f && infer_cnt >= cnt_loop) {
+            break;
+        }
+
+        // --- Sync Input ---
+        for (int i = 0; i < vision_ctx->io_num.n_input; i++) {
+            ret = rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->inputs[i].mem, RKNN3_MEMORY_SYNC_TO_DEVICE);
+            if (ret != RKNN3_SUCCESS) {
+                printf("rknn3_mem_sync input[%d] failed! ret=%d\n", i, ret);
+                goto out;
+            }
+        }
+
+        // --- Run Model ---
+        ret = rknn3_run(vision_ctx->rknn_ctx, vision_ctx->inputs, vision_ctx->io_num.n_input, vision_ctx->outputs, vision_ctx->io_num.n_output);
+        if (ret < 0) {
+            printf("[rknn3_model_stress_test_error] rknn_run fail! ret=%d\n", ret);
+            goto out;
+        }
+
+        // --- Sync Output ---
+        for (int i = 0; i < vision_ctx->io_num.n_output; i++) {
+            rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
+        }
+
+        infer_cnt++;
+        tot_cost.tok();
+        float tmp_time = tot_cost.get_time();
+
+        if (tmp_time - last_print_time >= print_interval) {
+            tot_cost.print_time("rknn3_cnn_demo running cost: ");
+            last_print_time = tmp_time;
+        }
+        if (time_loop != 0.f) {
+            // 时间模式退出检查
+            if (tmp_time >= time_loop_ms) {
+                break;
+            }
+        }
+    }
+    // 4. 统一最终统计输出
+    {
+        float total_time = tot_cost.get_time();
+        float avgCost = total_time / infer_cnt;
+        float avgFPS = 1000.f / avgCost;
+
+        // printf("\n---------------- Final Result ----------------\n");
+        if (vision_ctx->device_id_mac) {
+            printf("device_id: %s\n", vision_ctx->device_id_mac);
+        }
+        printf("run %d ,tot_time:%8.2f,avgFPS: %8.2f ,avgCost: %8.2f ms\n",cnt_loop,total_time,avgFPS,avgCost);
+
+        // printf("Run Count: %d, Tot Time: %8.2f ms\n", infer_cnt, total_time);
+        // printf("Avg FPS  : %.2f, Avg Cost : %8.2f ms\n", avgFPS, avgCost);
+
+    }
+    
 
 #if 0
     for (uint32_t i = 0; i < vision_ctx->io_num.n_output; i++) {

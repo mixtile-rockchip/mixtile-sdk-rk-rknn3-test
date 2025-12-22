@@ -395,7 +395,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
     float time_limit_ms = is_time_mode ? (float)time_loop * 3600.0f * 1000.0f : 0;
     int max_iters = (!is_time_mode && is_equal_loop) ? vision_loop : 1;
     uint32_t n_inputs = app_ctx->vision.io_num.n_output;
-    
+
     if (!is_time_mode && !is_equal_loop) {
         ret = inference_rknn3_vlm_vision(&(app_ctx->vision), img, vision_loop);
         if (ret == 0) {
@@ -407,7 +407,6 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
             return ret;
         }
     } else {
-        
         infer_cost_time.tik();
         int iter = 0;
 
@@ -474,7 +473,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
     #endif
     
     if(ret == 0) {
-        
+        printf("[rknn3_model_stress_test_done] rknn3_vlm_demo run done\n");
         printf("\n+------------------+--------------------+\n");
         printf("| Stage            | Perf               |\n");
         printf("+------------------+--------------------+\n");
@@ -485,7 +484,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
         printf("| %-16s | %-14.3f(ms) |\n", "TTFT", llm_perfill.get_time());
         printf("| %-16s | %-8.3f(tokens/s) |\n", "TPS", tps);
         printf("+------------------+--------------------+\n");
-        printf("[rknn3_model_stress_test_done] rknn3_vlm_demo run done\n");
+        
     }
     
     return ret;

@@ -1,7 +1,11 @@
 #ifndef _RKNN_DEMO_TIMER_H_
 #define _RKNN_DEMO_TIMER_H_
 
-#include <sys/time.h>
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 199309L
+#endif
+
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
