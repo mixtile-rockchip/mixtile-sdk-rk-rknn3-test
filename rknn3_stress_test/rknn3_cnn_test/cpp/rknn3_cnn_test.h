@@ -20,7 +20,6 @@
 #include "common.h"
 
 #define RKNN3_DEFAULT_DEVICE_ID 0
-
 typedef struct {
     rknn3_context rknn_ctx;
     rknn3_input_output_num io_num;
@@ -35,8 +34,8 @@ typedef struct {
     uint32_t embeds_ndims;
 } rknn_common_img_ctx;
 
-int init_common_img(rknn_common_img_ctx* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask, uint32_t device_id);
+int init_common_img(rknn_common_img_ctx* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask,uint32_t device_id);
 int release_common_img(rknn_common_img_ctx* vision_ctx);
 int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,uint32_t loop,float time_loop);
 
-#endif //_RKNN_DEMO_COMMON_VISION_UTILS_H_
+#endif 

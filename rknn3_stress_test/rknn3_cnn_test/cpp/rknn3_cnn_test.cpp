@@ -59,6 +59,7 @@ int init_common_img(rknn_common_img_ctx* vision_ctx, const char* model_path, con
     memset(&config, 0, sizeof(config));
     config.run_core_mask = core_mask;
     config.user_mem_internal = 0;
+
     // 获取目前连接的RK182X信息
     rknn3_devices rknn3_devices;
     memset(&rknn3_devices, 0 ,sizeof(rknn3_devices));
@@ -422,8 +423,19 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
         int infer_cnt = 1;
         tot_cost.tik();
         static float last_print_time = 0.0f;
-        float print_interval = 1 ; //1ms
+        float print_interval = 1*1000*60 ; //1ms
         while(1) {
+            // printf("---------------------test_by_cdd\n");
+            for (int i = 0; i < vision_ctx->io_num.n_input; i++)
+            {
+                // printf("Syncing input[%d] to device...\n", i);
+                ret = rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->inputs[i].mem, RKNN3_MEMORY_SYNC_TO_DEVICE);
+                if (ret != RKNN3_SUCCESS)
+                {
+                    printf("rknn3_mem_sync input[%d] failed! ret=%d\n", i, ret);
+                    break;
+                }
+            }
             // cost.tik();
             ret = rknn3_run(vision_ctx->rknn_ctx, vision_ctx->inputs, vision_ctx->io_num.n_input, vision_ctx->outputs, vision_ctx->io_num.n_output);
             if (ret < 0)
@@ -431,41 +443,93 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
                 printf("[rknn3_model_stress_test_error] rknn_run fail! ret=%d\n", ret);
                 goto out;
             }
+
+            for (int i = 0; i < vision_ctx->io_num.n_output; i++)
+            {
+                // printf("Syncing output[%d] from device...\n", i);
+                rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
+                if (ret != RKNN3_SUCCESS)
+                {
+                    printf("rknn3_mem_sync output[%d] failed! ret=%d\n", i, ret);
+                    break;
+                }
+            }
+
             // cost.tok();
             tot_cost.tok();
             float tmp_time = tot_cost.get_time();
             // float print_time_delta = 20 *1000*60*60; // 20min
             if(tmp_time - last_print_time >= print_interval) {
-                printf("FPS: %8.2f\n",infer_cnt/tot_cost.get_time()*1000.f);
+                // printf("FPS: %8.2f\n",infer_cnt/tot_cost.get_time()*1000.f);
                 tot_cost.print_time("rknn3_cnn_demo cost now: ");
                 last_print_time = tmp_time;         // 更新上次打印时间
             }
             if(tmp_time >= time_loop_ms) {
+                float avgCost = tmp_time / infer_cnt;
+                float avgFPS = 1000. / avgCost;
+                printf("run %d ,tot_time:%8.2f,avgFPS: %.2f ,avgCost = %8.2f ms\n",infer_cnt,tmp_time,avgFPS,avgCost);
                 break;
             }
             // printf("FPS: %8.2f\n",infer_cnt/tot_cost.get_time()*1000.f);
             infer_cnt ++;
             // cost.print_time("rknn_vision_test");
             // printf("rknn_cnn_test time_loop: %d / %d ,cost_time: %8.2f\n",i+1,cnt_loop,cost.get_time());
+            
         }
     } else{
         float tot_cost = 0.f;
+        TIMER sync_cost;
+        
         for(int i = 0;i < cnt_loop;i ++) {
             cost.tik();
+            sync_cost.tik();
+            for (int i = 0; i < vision_ctx->io_num.n_input; i++)
+            {
+                // printf("Syncing input[%d] to device...\n", i);
+                ret = rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->inputs[i].mem, RKNN3_MEMORY_SYNC_TO_DEVICE);
+                if (ret != RKNN3_SUCCESS)
+                {
+                    printf("rknn3_mem_sync input[%d] failed! ret=%d\n", i, ret);
+                    break;
+                }
+            }
+            sync_cost.tok();
+            sync_cost.print_time("Syncing input cost: ");
+
             ret = rknn3_run(vision_ctx->rknn_ctx, vision_ctx->inputs, vision_ctx->io_num.n_input, vision_ctx->outputs, vision_ctx->io_num.n_output);
             if (ret < 0)
             {
                 printf("[rknn3_model_stress_test_error] rknn_run fail! ret=%d\n", ret);
                 goto out;
             }
+            sync_cost.tik();
+            for (int i = 0; i < vision_ctx->io_num.n_output; i++)
+            {
+                // printf("Syncing output[%d] from device...\n", i);
+                rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
+                if (ret != RKNN3_SUCCESS)
+                {
+                    printf("rknn3_mem_sync output[%d] failed! ret=%d\n", i, ret);
+                    break;
+                }
+            }
+            
             cost.tok();
             tot_cost += cost.get_time();
+            sync_cost.tok();
+            sync_cost.print_time("Syncing outputs cost: ");
+
             // cost.print_time("rknn_vision_test");
-            printf("rknn_cnn_test cnt_loop: %d / %d ,FPS : %8.2f\n",i+1,cnt_loop,(i+1)/tot_cost*1000.f);
+            printf("rknn_cnn_test cnt_loop: %d / %d ,cost time : %8.2f ms\n",i, cnt_loop,cost.get_time());
         }
+        
+        float avgCost = tot_cost / (cnt_loop);
+        float avgFPS = 1000. / avgCost;
+        printf("run %d ,tot_time:%8.2f,avgFPS: %.2f ,avgCost = %8.2f ms\n",cnt_loop,tot_cost,avgFPS,avgCost);
+        
     }
 
-#if 1
+#if 0
     for (uint32_t i = 0; i < vision_ctx->io_num.n_output; i++) {
         rknn3_tensor_attr *output_attr = vision_ctx->outputs[i].attr;
         rknn3_tensor_mem *output_mem = vision_ctx->outputs[i].mem;
@@ -474,20 +538,40 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
         // rt_hw_cpu_dcache_ops(RT_HW_CACHE_INVALIDATE, (void*)output_mem->virt_addr, output_mem->size);
         // int  dst_elems = 
         int aligned_size = output_attr->aligned_size;
-        int dst_elems = aligned_size / sizeof(float16);
-        printf("......vision_ctx->outputs[0].mem->size:%d\n",aligned_size);
+        int aligned_type_size = 0;
+        if(output_attr->dtype == RKNN3_TENSOR_FLOAT16) {
+            aligned_type_size = sizeof(float16);
+        }
+        else if(output_attr->dtype == RKNN3_TENSOR_INT8) {
+            aligned_type_size = sizeof(int8_t);
+        }
+        else {
+            printf("not support output_attr->dtype:%d save\n",output_attr->dtype);
+            return -1;
+        }
+        int dst_elems = aligned_size / aligned_type_size;
+        printf("......vision_ctx->outputs[0].mem->size:%d,dst_elems:%d\n",aligned_size,dst_elems);
         float *output_data = (float *)malloc(dst_elems *sizeof(float));
         if (output_data == NULL) {
             printf("Failed to allocate memory for output_data\n");
         }
         printf("output_attr->layout: %d\n",output_attr->layout);
-        int channel = 3;
-        int h = 624,w = 624;
+        // int channel = 3;
+        // int h = output_attr->n_dims,w = 624;
+        // int h =0,w = 0;
+        // for(int dim = 0;dim < output_attr->n_dims;dim ++) {
+        //     h = output_attr->shape;
+        // }
+
+        int channel = output_attr[i].n_dims > 1 ? output_attr[i].shape[1] : 1;
+        int h = output_attr[i].n_dims > 2 ? output_attr[i].shape[2] : 1;
+        int w = output_attr[i].n_dims > 3 ? output_attr[i].shape[3] : 1;
         if (output_attr->layout == RKNN3_TENSOR_NC1HWC2) {
             if (output_attr->dtype == RKNN3_TENSOR_FLOAT16) {
                 int C1 = output_attr->shape[1];
                 int C2 = output_attr->shape[4];
-                int hw = output_attr->shape[2] * output_attr->shape[3];
+                int hw = output_attr->shape[2] * output_attr->shape[3]; 
+                // int channel = 
                 NC1HWC2_fp16_to_NCHW_fp32((float16 *)output_mem->virt_addr, output_data, batch, C1, C2, hw, channel, h, w);
             } else if (output_attr->dtype == RKNN3_TENSOR_INT8) {
                 int C1 = output_attr->shape[1];
@@ -496,6 +580,7 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
                 NC1HWC2_int8_to_NCHW_fp32((int8_t *)output_mem->virt_addr, output_data, batch, C1, C2, hw, channel, h, w, output_attr);
             } else {
                 printf("Unsupported type for NC1HWC2 format: %s\n", rknn3_get_type_string(output_attr->dtype));
+                return -1;
             }
         } else if (output_attr->layout == RKNN3_TENSOR_NCHW || output_attr->layout == RKNN3_TENSOR_UNDEFINED) {
             if (output_attr->dtype == RKNN3_TENSOR_INT8) {
@@ -519,9 +604,12 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
         npy_save_float_buffer_to_file(filename, output_data, output_attr->n_elems, shape, output_attr->n_dims);
         if (shape) {
             free(shape);
+            shape = NULL;
         }
-
-
+        if(output_data) {
+            free(output_data);
+            output_data = NULL;
+        }
     }
 
 #endif 

@@ -41,6 +41,7 @@ void print_usage(char *argv[]) {
     printf("  -i, --image_path  core mask  \n");
     printf("  -cl, --cnt_loop  default:1      \n");
     printf("  -tl, --time_loop(hours) \n");
+    printf("  -id, --device_id \n");
     printf("\nUse '%s --help' to display this message.\n", argv[0]);
 
     return;
@@ -56,25 +57,25 @@ int main(int argc, char **argv)
     uint32_t cnt_loop = 1 ;
     float time_loop = 0.f;
     uint32_t device_id = RKNN3_DEFAULT_DEVICE_ID;
-    for (int i = 1; i < argc; i += 2) {
+     for (int i = 1; i < argc; i += 2) {
         if (strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--model_path") == 0) {
             common_model_path = argv[i + 1];
-        } else if(strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "--weight_path") == 0) {
+        }else if(strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "--weight_path") == 0) {
             common_weight_path = argv[i + 1];
         } else if(strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--core_mask") == 0) {
              core_mask  = strtoul(argv[i + 1], nullptr, 16);
-        } else if(strcmp(argv[i], "-cl") == 0 || strcmp(argv[i], "--cnt_loop") == 0) {
+        }else if(strcmp(argv[i], "-cl") == 0 || strcmp(argv[i], "--cnt_loop") == 0) {
              cnt_loop  =atoi(argv[i+1]);
         } else if(strcmp(argv[i], "-tl") == 0 || strcmp(argv[i], "--time_loop") == 0) {
             time_loop = atof(argv[i+1]);
         } else if(strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--image_path") == 0) {
             img_path = argv[i + 1];
-        } else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0) {
+        }else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0) {
             device_id = atoi(argv[i + 1]);
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv);
             return 0;
-        } else {
+        }else {
             printf("[rknn3_model_stress_test_error] Unknown option: %s\n", argv[i]);
             print_usage(argv);
             return -1;
@@ -97,7 +98,7 @@ int main(int argc, char **argv)
     float16* img_embeds;
 
     // printf("core_mask :%d\n",core_mask);
-    ret = init_common_img(&rknn_app_ctx, common_model_path, common_weight_path, core_mask, device_id);
+    ret = init_common_img(&rknn_app_ctx, common_model_path, common_weight_path,core_mask,device_id);
     if (ret != 0)
     {
         printf("[rknn3_model_stress_test_error] init_common_img fail! ret=%d llm_model_path=%s vision_model_path=%s\n", ret, common_model_path, common_weight_path);
