@@ -88,13 +88,13 @@ do
         device_id=$(echo "$device_id_line" | awk -F': ' '{print $2}')
 
         fps_line=$(grep 'avgFPS' "$log" 2>/dev/null | tail -n 1)
-        
+        # echo "$fps_line"
         if [[ -z "$fps_line" ]]; then
             echo "Core $core: 无效日志或无 FPS 信息"
             continue
         fi
         
-        fps=$(echo "$fps_line" | awk -F':' '{print $NF}' | awk '{print $1}')
+        fps=$(echo "$fps_line" | awk -F'avgFPS:' '{print $NF}' | awk '{print $1}')
         # 假设变量 $log_line 是你的日志行
         run_cnt=$(echo "$fps_line" | awk '{print $2}')
         # 先用冒号切分取最后一段，再用逗号切分取第一段

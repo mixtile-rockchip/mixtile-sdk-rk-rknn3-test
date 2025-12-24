@@ -590,7 +590,7 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
         if (vision_ctx->device_id_mac) {
             printf("device_id: %s\n", vision_ctx->device_id_mac);
         }
-        printf("run %d ,tot_time:%8.2f,avgFPS: %8.2f ,avgCost: %8.2f ms\n",cnt_loop,total_time,avgFPS,avgCost);
+        printf("run %d ,tot_time:%8.2f,avgFPS: %.3f ,avgCost: %8.2f ms\n",infer_cnt,total_time,avgFPS,avgCost);
 
         // printf("Run Count: %d, Tot Time: %8.2f ms\n", infer_cnt, total_time);
         // printf("Avg FPS  : %.2f, Avg Cost : %8.2f ms\n", avgFPS, avgCost);

@@ -109,16 +109,22 @@ for log in "${log_files[@]}"; do
     echo ""
 done
 
+dest="/data/rknn3_model_stress_test_log/rknn3_${model_dirname}_${start_time}"
+mkdir -p "$dest"
+cp "${LOG_DIR}"/* "$dest/" 2>/dev/null || true
+echo "日志拷贝到：$dest"
+rm -rf ${LOG_DIR}
+
 if [ $error_found -eq 0 ]; then
-    rm -rf ${LOG_DIR}
+    # rm -rf ${LOG_DIR}
     echo "✅ [SUCCESS] 所有设备压测通过。"
     echo "[rknn3_model_stress_test_done]"
 else
     dest="/data/rknn3_model_stress_test_log/rknn3_${model_dirname}_${start_time}"
-    mkdir -p "$dest"
-    cp "${LOG_DIR}"/* "$dest/" 2>/dev/null || true
+    # mkdir -p "$dest"
+    # cp "${LOG_DIR}"/* "$dest/" 2>/dev/null || true
     echo "❌ [ERROR] 部分设备压测存在异常，请检查上述日志。"
-    echo "日志拷贝到：$dest"
+    # echo "日志拷贝到：$dest"
     echo "[rknn3_model_stress_test_error]"
     exit 1
 fi

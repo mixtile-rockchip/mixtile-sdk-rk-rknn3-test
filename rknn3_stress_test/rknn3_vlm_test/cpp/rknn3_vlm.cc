@@ -285,7 +285,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                                 rknn3_llm_multimodal_tensor tensor,
                                 int vision_loop,
                                 int llm_loop,
-                                int time_loop)
+                                float time_loop)
 {
     int ret;
 

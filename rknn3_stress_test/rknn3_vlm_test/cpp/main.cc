@@ -230,6 +230,7 @@ int main(int argc, char **argv) {
     printf("vision_loop: %d\n", vision_loop);
     printf("llm_loop: %d\n", llm_loop);
     printf("device_id : %d\n", device_id);
+    printf("time_loop : %f\n",time_loop);
 
     // 检查必要参数
     if (!vision_model_path || !vision_weight_path || !llm_model_path || !llm_weight_path || vision_core_mask == 0 || llm_core_mask == 0) {
