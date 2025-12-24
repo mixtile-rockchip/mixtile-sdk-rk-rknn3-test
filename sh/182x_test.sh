@@ -1,59 +1,59 @@
 #!/bin/bash
 
-# 定义颜色代码，用于美化输出
+# Define color codes for output formatting
 RED='\033[1;31m'
 GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[1;34m'
 PURPLE='\033[1;35m'
 CYAN='\033[1;36m'
-NC='\033[0m' # 恢复默认颜色
+NC='\033[0m' # Reset color
 
-# 脚本信息
+# Script information
 SCRIPT_VERSION="1.0"
 TEST_RESULTS_DIR="./test_results"
 mkdir -p "$TEST_RESULTS_DIR"
 LOG_FILE="$TEST_RESULTS_DIR/rknn_test_$(date +%Y%m%d_%H%M%S).log"
 
-# 全局变量
+# Global variables
 LOOP=1
 DEVICES_NUM=1
 SEQ_LEN=512
 NEW_TOKENS=512
 
 # ============================================================================
-# 输入验证函数
+# Input validation functions
 # ============================================================================
 
-# 通用输入验证函数
+# Generic input validation function
 validate_number_input() {
     local prompt="$1"
     local variable_name="$2"
-    local min_value="${3:-1}"  # 默认最小值为1
-    local max_value="${4:-100000}"  # 默认最大值较大以适应不同参数
+    local min_value="${3:-1}"  # Default minimum value is 1
+    local max_value="${4:-100000}"  # Default maximum value is large to accommodate different parameters
     
     while true; do
         read -p "$prompt" input
         
-        # 验证是否为空
+        # Validate if input is empty
         if [[ -z "$input" ]]; then
-            echo -e "${RED}错误：输入不能为空，请重新输入！${NC}"
+            echo -e "${RED}Error: Input cannot be empty, please re-enter!${NC}"
             continue
         fi
         
-        # 验证是否为正整数
+        # Validate if input is a positive integer
         if [[ ! "$input" =~ ^[1-9][0-9]*$ ]]; then
-            echo -e "${RED}错误：请输入有效的正整数！${NC}"
+            echo -e "${RED}Error: Please enter a valid positive integer!${NC}"
             continue
         fi
         
-        # 验证范围
+        # Validate range
         if [[ "$input" -lt "$min_value" || "$input" -gt "$max_value" ]]; then
-            echo -e "${RED}错误：请输入${min_value}-${max_value}之间的数字！${NC}"
+            echo -e "${RED}Error: Please enter a number between ${min_value}-${max_value}!${NC}"
             continue
         fi
         
-        # 赋值给全局变量
+        # Assign to global variable
         if [[ "$variable_name" == "LOOP" ]]; then
             LOOP="$input"
         elif [[ "$variable_name" == "DEVICES_NUM" ]]; then
@@ -69,28 +69,28 @@ validate_number_input() {
 }
 
 get_loop() {
-    validate_number_input "请输入循环次数: " "LOOP" 1 100000
+    validate_number_input "Enter number of loops (1-100000): " "LOOP" 1 100000
 }
 
 get_devices_num() {
-    validate_number_input "请输入设备数量(1-64): " "DEVICES_NUM" 1 64
+    validate_number_input "Enter number of devices (1-64): " "DEVICES_NUM" 1 64
 }
 
 get_seq_len() {
-    validate_number_input "请输入seq_len: " "SEQ_LEN" 1 65536
+    validate_number_input "Enter sequence length (seq_len, 1-65536): " "SEQ_LEN" 1 65536
 }
 
 get_new_tokens() {
-    validate_number_input "请输入new_tokens: " "NEW_TOKENS" 1 65536
+    validate_number_input "Enter number of new tokens to generate (1-65536): " "NEW_TOKENS" 1 65536
 }
 
 # ============================================================================
-# 通用测试函数框架
+# Generic testing framework
 # ============================================================================
 
-# 模型配置数组
+# Model configuration array
 declare -A MODEL_CONFIGS=(
-    # CNN模型
+    # CNN models
     ["cnn_1"]="Dinov3 cnn ../Dinov3/Dinov3"
     ["cnn_2"]="Siglip2 cnn ../Siglip2/Siglip2" 
     ["cnn_3"]="YOLOv5s cnn ../YOLOv5s/YOLOv5s"
@@ -100,11 +100,11 @@ declare -A MODEL_CONFIGS=(
     ["cnn_7"]="MobilenetV2 cnn ../MobilenetV2/MobilenetV2"
     ["cnn_8"]="Resnet50-v2 cnn ../Resnet50-v2/Resnet50-v2"
     
-    # LLM模型
+    # LLM models
     ["llm_1"]="Qwen2.5-3B-Instruct llm ../Qwen2.5-3B-Instruct/Qwen2.5-3B-Instruct"
     ["llm_2"]="Qwen2.5-7B-Instruct llm ../Qwen2.5-7B-Instruct/Qwen2.5-7B-Instruct"
     
-    # VLM模型
+    # VLM models
     ["vlm_1"]="FasterVLM-llm vlm ../FasterVLM-llm/FasterVLM-llm"
     ["vlm_2"]="InternVL3-2B vlm ../InternVL3-2B/InternVL3-2B"
     ["vlm_3"]="InternVL3_5-4B vlm ../InternVL3_5-4B/InternVL3_5-4B"
@@ -114,70 +114,70 @@ declare -A MODEL_CONFIGS=(
     ["vlm_7"]="Qwen3-VL-4B vlm ../Qwen3-VL-4B/Qwen3-VL-4B"
 )
 
-# 通用模型测试函数
+# Generic model testing function
 test_model() {
     local model_name="$1"
     local model_type="$2"
     local model_path="$3"
     
     show_test_start "$model_type" "$model_name"
-    echo "执行${model_name}模型测试..."
+    echo "Executing ${model_name} model test..."
     
-    # 获取用户输入
+    # Get user input
     get_loop
     get_devices_num
-    echo "循环次数是: $LOOP"
-    echo "设备数量: $DEVICES_NUM"
+    echo "Number of loops: $LOOP"
+    echo "Number of devices: $DEVICES_NUM"
     
-    # 根据模型类型执行不同的测试命令[2](@ref)
+    # Execute different test commands based on model type
     case "$model_type" in
         "llm")
-            # LLM模型需要额外的参数输入
+            # LLM models require additional parameters
             get_seq_len
             get_new_tokens
-            echo "seq_len: $SEQ_LEN"
-            echo "new_tokens: $NEW_TOKENS"
+            echo "Sequence length (seq_len): $SEQ_LEN"
+            echo "New tokens to generate: $NEW_TOKENS"
             
-            # LLM模型测试命令
-            echo -e "${CYAN}执行LLM测试命令: ./rknn3_llm_test.sh $model_path $SEQ_LEN $NEW_TOKENS 0 $LOOP $DEVICES_NUM${NC}"
+            # LLM test command
+            echo -e "${CYAN}Executing LLM test command: ./rknn3_llm_test.sh $model_path $SEQ_LEN $NEW_TOKENS 0 $LOOP $DEVICES_NUM${NC}"
             ./rknn3_llm_test.sh $model_path $SEQ_LEN $NEW_TOKENS 0 $LOOP $DEVICES_NUM
             ;;
         "cnn")
-            # CNN模型测试命令
-            echo -e "${CYAN}执行CNN测试命令: ./rknn3_cnn_test.sh $model_path 0 $LOOP $DEVICES_NUM${NC}"
+            # CNN test command
+            echo -e "${CYAN}Executing CNN test command: ./rknn3_cnn_test.sh $model_path 0 $LOOP $DEVICES_NUM${NC}"
             ./rknn3_cnn_test.sh $model_path 0 $LOOP $DEVICES_NUM
             ;;
         "vlm")
-            # VLM模型测试命令
-            echo -e "${CYAN}执行VLM测试命令: ./rknn3_vlm_test.sh $model_path 0 $LOOP $DEVICES_NUM${NC}"
+            # VLM test command
+            echo -e "${CYAN}Executing VLM test command: ./rknn3_vlm_test.sh $model_path 0 $LOOP $DEVICES_NUM${NC}"
             ./rknn3_vlm_test.sh $model_path 0 $LOOP $DEVICES_NUM
             ;;
         *)
-            echo -e "${RED}未知的模型类型: $model_type${NC}"
+            echo -e "${RED}Unknown model type: $model_type${NC}"
             show_test_result 1 "$model_name"
             wait_return
             return 1
             ;;
     esac
     
-    # 检查命令执行结果
+    # Check command execution result
     local test_result=$?
     if [ $test_result -eq 0 ]; then
         show_test_result 0 "$model_name"
-        log_message "$model_name 测试完成 - 循环: $LOOP, 设备: $DEVICES_NUM, 序列长度: $SEQ_LEN, 新令牌数: $NEW_TOKENS"
+        log_message "$model_name test completed - Loops: $LOOP, Devices: $DEVICES_NUM, Seq Len: $SEQ_LEN, New Tokens: $NEW_TOKENS"
     else
         show_test_result 1 "$model_name"
-        log_message "$model_name 测试失败 - 退出码: $test_result"
+        log_message "$model_name test failed - Exit code: $test_result"
     fi
     
     wait_return
 }
 
 # ============================================================================
-# 菜单生成函数（保持不变）
+# Menu generation functions
 # ============================================================================
 
-# 通用菜单生成函数
+# Generic menu generation function
 generate_test_menu() {
     local menu_type="$1"
     local menu_title="$2"
@@ -185,9 +185,9 @@ generate_test_menu() {
     
     while true; do
         show_test_header
-        echo -e "${color}${menu_title}选项：${NC}"
+        echo -e "${color}${menu_title} Options:${NC}"
         
-        # 动态生成菜单选项
+        # Dynamically generate menu options
         local count=1
         local menu_items=()
         
@@ -199,14 +199,14 @@ generate_test_menu() {
         done
         
         local return_option=$count
-        echo "$return_option. 返回上级菜单"
+        echo "$return_option. Return to previous menu"
         echo
         
-        read -rp "请选择要测试的模型 (1-$return_option): " choice
+        read -rp "Please select a model to test (1-$return_option): " choice
         
-        # 验证输入[1](@ref)
+        # Validate input
         if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
-            echo -e "${RED}无效输入，请输入数字！${NC}"
+            echo -e "${RED}Invalid input, please enter a number!${NC}"
             sleep 2
             continue
         fi
@@ -218,111 +218,111 @@ generate_test_menu() {
             local model_info=(${MODEL_CONFIGS[$selected_key]})
             test_model "${model_info[0]}" "${model_info[1]}" "${model_info[2]}"
         else
-            echo -e "${RED}无效选择，请输入1-$return_option${NC}"
+            echo -e "${RED}Invalid selection, please enter 1-$return_option${NC}"
             sleep 2
         fi
     done
 }
 
 # ============================================================================
-# 核心功能函数（保持不变）
+# Core functionality functions
 # ============================================================================
 
-# 记录日志函数
+# Logging function
 log_message() {
     local message="$1"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $message" | tee -a "$LOG_FILE"
 }
 
-# 显示测试头信息
+# Display test header information
 show_test_header() {
     clear
     echo -e "${GREEN}"
     echo "========================================"
-    echo "          182X算力卡 测试脚本"
-    echo "                版本 $SCRIPT_VERSION"
+    echo "          182X Computing Card Test Script"
+    echo "                Version $SCRIPT_VERSION"
     echo "========================================"
     echo -e "${NC}"
 }
 
-# 等待用户按键返回
+# Wait for user key press to return
 wait_return() {
     echo
-    echo -e "${YELLOW}按 Enter 键返回菜单...${NC}"
+    echo -e "${YELLOW}Press Enter to return to menu...${NC}"
     read -r
 }
 
-# 显示测试开始信息
+# Display test start information
 show_test_start() {
     local model_type="$1"
     local model_name="$2"
     echo
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${GREEN}开始 $model_type 测试${NC}"
-    echo -e "${GREEN}模型: $model_name${NC}"
+    echo -e "${GREEN}Starting $model_type Test${NC}"
+    echo -e "${GREEN}Model: $model_name${NC}"
     echo -e "${BLUE}========================================${NC}"
-    log_message "开始测试: $model_type - $model_name"
+    log_message "Starting test: $model_type - $model_name"
 }
 
-# 显示测试结果
+# Display test result
 show_test_result() {
     local success="$1"
     local model_name="$2"
     
     if [ "$success" -eq 0 ]; then
-        echo -e "${GREEN}✓ $model_name 测试完成${NC}"
-        log_message "$model_name 测试结果: 完成"
+        echo -e "${GREEN}✓ $model_name test completed${NC}"
+        log_message "$model_name test result: Completed"
     else
-        echo -e "${RED}✗ $model_name 测试失败${NC}"
-        log_message "$model_name 测试结果: 失败"
+        echo -e "${RED}✗ $model_name test failed${NC}"
+        log_message "$model_name test result: Failed"
     fi
 }
 
 # ============================================================================
-# 菜单函数（简化版）
+# Menu functions (simplified version)
 # ============================================================================
 
-# 主菜单
+# Main menu
 main_menu() {
     while true; do
         show_test_header
-        echo -e "${GREEN}主菜单选项：${NC}"
+        echo -e "${GREEN}Main Menu Options:${NC}"
         echo "1. RKNN Test"
-        echo "2. 查看测试日志"
+        echo "2. View Test Logs"
         echo "3. Exit"
         echo
         
-        read -rp "请选择操作 (1-3): " choice
+        read -rp "Please select an operation (1-3): " choice
         
         case $choice in
             1) rknn_test_menu ;;
             2) view_test_logs ;;
             3) 
-                echo -e "${GREEN}感谢使用182x测试脚本，再见！${NC}"
-                log_message "脚本正常退出"
+                echo -e "${GREEN}Thank you for using the 182x test script, goodbye!${NC}"
+                log_message "Script exited normally"
                 exit 0 
                 ;;
             *) 
-                echo -e "${RED}无效选择，请输入1-3${NC}"
+                echo -e "${RED}Invalid selection, please enter 1-3${NC}"
                 sleep 2
                 ;;
         esac
     done
 }
 
-# RKNN测试主菜单
+# RKNN test main menu
 rknn_test_menu() {
     while true; do
         show_test_header
-        echo "测试之前请将测试所需的模型文件，放置在与 rk3588_linux_aarch64_rk1820_stress_test测试包目录同级的路径下"
-        echo -e "${BLUE}RKNN测试选项：${NC}"
-        echo "1. CNN模型验证测试"
-        echo "2. LLM模型验证测试" 
-        echo "3. VLM模型验证测试"
-        echo "4. 返回主菜单"
+        echo "Before testing, please place the required model files in the directory at the same level as the rk3588_linux_aarch64_rk1820_stress_test package directory"
+        echo -e "${BLUE}RKNN Test Options:${NC}"
+        echo "1. CNN Model Validation Test"
+        echo "2. LLM Model Validation Test" 
+        echo "3. VLM Model Validation Test"
+        echo "4. Return to Main Menu"
         echo
         
-        read -rp "请选择测试类型 (1-4): " choice
+        read -rp "Please select test type (1-4): " choice
         
         case $choice in
             1) cnn_test_menu ;;
@@ -330,43 +330,43 @@ rknn_test_menu() {
             3) vlm_test_menu ;;
             4) return ;;
             *) 
-                echo -e "${RED}无效选择，请输入1-4${NC}"
+                echo -e "${RED}Invalid selection, please enter 1-4${NC}"
                 sleep 2
                 ;;
         esac
     done
 }
 
-# 使用通用菜单函数
+# Use generic menu functions
 cnn_test_menu() {
-    generate_test_menu "cnn" "CNN模型验证测试" "${CYAN}"
+    generate_test_menu "cnn" "CNN Model Validation Test" "${CYAN}"
 }
 
 llm_test_menu() {
-    generate_test_menu "llm" "LLM模型验证测试" "${PURPLE}"
+    generate_test_menu "llm" "LLM Model Validation Test" "${PURPLE}"
 }
 
 vlm_test_menu() {
-    generate_test_menu "vlm" "VLM模型验证测试" "${YELLOW}"
+    generate_test_menu "vlm" "VLM Model Validation Test" "${YELLOW}"
 }
 
 # ============================================================================
-# 日志查看功能
+# Log viewing functionality
 # ============================================================================
 
 view_test_logs() {
     show_test_header
-    echo -e "${CYAN}测试日志内容：${NC}"
+    echo -e "${CYAN}Test Log Content:${NC}"
     echo "=========================================="
     
     if [ -f "$LOG_FILE" ]; then
         if [ -s "$LOG_FILE" ]; then
             tail -20 "$LOG_FILE"
         else
-            echo "日志文件为空"
+            echo "Log file is empty"
         fi
     else
-        echo "日志文件不存在"
+        echo "Log file does not exist"
     fi
     
     echo "=========================================="
@@ -374,23 +374,23 @@ view_test_logs() {
 }
 
 # ============================================================================
-# 脚本初始化
+# Script initialization
 # ============================================================================
 
-# 检查脚本是否直接运行
+# Check if script is executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    # 设置信号处理，确保优雅退出
-    trap 'echo -e "\n${RED}脚本被用户中断${NC}"; log_message "脚本被用户中断"; exit 1' INT TERM
+    # Set signal handling for graceful exit
+    trap 'echo -e "\n${RED}Script interrupted by user${NC}"; log_message "Script interrupted by user"; exit 1' INT TERM
     
-    # 显示欢迎信息
+    # Display welcome message
     show_test_header
     ./install_rknn3_model_stress.sh
-    echo -e "${GREEN}脚本初始化完成${NC}"
-    echo -e "测试结果目录: $TEST_RESULTS_DIR"
-    echo -e "日志文件: $LOG_FILE"
+    echo -e "${GREEN}Script initialization completed${NC}"
+    echo -e "Test results directory: $TEST_RESULTS_DIR"
+    echo -e "Log file: $LOG_FILE"
     echo
-    log_message "=== 测试脚本启动 ==="
+    log_message "=== Test script started ==="
     
-    # 进入主菜单
+    # Enter main menu
     main_menu
 fi
