@@ -314,6 +314,7 @@ main_menu() {
 rknn_test_menu() {
     while true; do
         show_test_header
+        echo "测试之前请将测试所需的模型文件，放置在与 rk3588_linux_aarch64_rk1820_stress_test测试包目录同级的路径下"
         echo -e "${BLUE}RKNN测试选项：${NC}"
         echo "1. CNN模型验证测试"
         echo "2. LLM模型验证测试" 
