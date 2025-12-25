@@ -572,7 +572,7 @@ show_test_header() {
     echo -e "${GREEN}"
     echo "========================================"
     echo "          AI Coprocessor Test Script"
-    echo "            Version $SCRIPT_VERSION"
+    echo "               Version $SCRIPT_VERSION"
     echo "========================================"
     echo -e "${NC}"
 }
