@@ -32,7 +32,7 @@ static void dump_tensor_attr(rknn3_tensor_attr* attrs)
         shape_str += ", ";
       }
     }
-  
+
     std::string stride_str = "";
     for (int j = 0; j < attrs->n_stride; j++) {
       stride_str += std::to_string(attrs->stride[j]);
@@ -40,7 +40,7 @@ static void dump_tensor_attr(rknn3_tensor_attr* attrs)
         stride_str += ", ";
       }
     }
-  
+
     printf("Tensor: name=%s, n_dims=%d, shape=[%s], stride=[%s], aligned_size=%ld, layout=%s, dtype=%s, core_id=%d, "
            "qnt_type=%s\n",
            attrs->name, attrs->n_dims, shape_str.c_str(), stride_str.c_str(), attrs->aligned_size, rknn3_get_layout_string(attrs->layout),
@@ -90,6 +90,31 @@ int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* mode
         printf("[rknn3_model_stress_test_error] rknn_load_model failed! ret=%d\n", ret);
         return ret;
     }
+
+    // Query and validate vision core_mask before model init
+    uint32_t model_core_num = 0;
+    ret = rknn3_query(ctx, RKNN3_QUERY_CORE_NUMBER, &model_core_num, sizeof(model_core_num));
+    if (ret < 0) {
+        printf("[rknn3_model_stress_test_error] rknn3_query vision core number failed! ret=%d\n", ret);
+        rknn3_destroy(ctx);
+        return ret;
+    }
+    printf("[rknn3_stress_test_log] Vision model requires %u NPU cores\n", model_core_num);
+    printf("[rknn3_stress_test_log] User specified vision_core_mask: 0x%x\n", core_mask);
+
+    uint32_t core_num_from_mask = 0;
+    for (int i = 0; i < 32; i++) {
+        if (core_mask & (1 << i)) core_num_from_mask++;
+    }
+
+    if (core_num_from_mask != model_core_num) {
+        printf("[rknn3_model_stress_test_error] Vision core_mask 0x%x has %u cores, but model requires %u cores\n",
+               core_mask, core_num_from_mask, model_core_num);
+        printf("[rknn3_model_stress_test_error] Please specify exactly %u cores for vision model\n", model_core_num);
+        rknn3_destroy(ctx);
+        return -1;
+    }
+    printf("[rknn3_stress_test_log] Vision core mask validation passed (%u cores)\n", core_num_from_mask);
 
     //Init RKNN Model
     ret = rknn3_model_init(ctx, &config);
@@ -174,7 +199,7 @@ int init_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, const char* mode
                 vision_ctx->model_height, vision_ctx->model_width, vision_ctx->model_channel);
 
     }
-    else 
+    else
     {
         vision_ctx->pruned_version_flag = 1;
         vision_ctx->model_channel = 3;
@@ -232,14 +257,14 @@ void normalize_and_to_nchw(const unsigned char *src, float16 *dst, int width, in
     float mean[3] = {122.7f, 116.74f, 104.09f};
     float std[3] = {68.5f, 66.6f, 70.3f};
     int num_pixels = width * height;
-    
+
     // 分配临时NHWC缓冲区
     float16 *temp_nhwc = (float16 *)malloc(num_pixels * 3 * sizeof(float16));
     if (!temp_nhwc) {
         printf("[rknn3_model_stress_test_error] Memory allocation failed for temp_nhwc\n");
         return;
     }
-    
+
     // 1. 归一化到临时NHWC缓冲区
     for (int i = 0; i < num_pixels; ++i) {
         int idx = i * 3;
@@ -247,7 +272,7 @@ void normalize_and_to_nchw(const unsigned char *src, float16 *dst, int width, in
         temp_nhwc[idx + 1] = fp32_to_fp16(((float)src[idx + 1] - mean[1]) / std[1]);  // G通道
         temp_nhwc[idx + 2] = fp32_to_fp16(((float)src[idx + 2] - mean[2]) / std[2]);  // B通道
     }
-    
+
     // 2. 转换到NCHW
     for (int c = 0; c < 3; ++c) {  // 遍历R,G,B通道
         for (int h = 0; h < height; ++h) {
@@ -258,14 +283,14 @@ void normalize_and_to_nchw(const unsigned char *src, float16 *dst, int width, in
             }
         }
     }
-    
+
     // 释放临时缓冲区
     free(temp_nhwc);
 }
 
 void transpose_qwen3(float16 *in, float16 *out, int model_width, int model_height) {
-    int64_t dims[8] = {2,3,int(model_height/32),2,16,int(model_width/32),2,16};    
-    //[temporal_patch_size,channel, grid_h // merge_size,  merge_size, patch_size, 
+    int64_t dims[8] = {2,3,int(model_height/32),2,16,int(model_width/32),2,16};
+    //[temporal_patch_size,channel, grid_h // merge_size,  merge_size, patch_size,
     // grid_w // merge_size, merge_size, patch_size]
      int perm[8] = {2, 5, 3, 6, 1, 0, 4, 7};
     int64_t new_dims[8];
@@ -386,7 +411,7 @@ int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffe
         printf("[rknn3_model_stress_test_error] convert_image fail! ret=%d\n", ret);
         goto out;
     }
-    
+
     if(vision_ctx->pruned_version_flag == 1) {
         expand_data = (float16*)malloc(dst_img.size * 2 * sizeof(float16)); //expand
         normalize_and_to_nchw(dst_img.virt_addr, expand_data, vision_ctx->model_width, vision_ctx->model_height);
@@ -403,10 +428,10 @@ int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffe
         // Set Input Data
         memcpy(vision_ctx->inputs[0].mem->virt_addr, (uint8_t*)dst_img.virt_addr, dst_img.size);
     }
-    
+
     // Run
     // printf("rknn_run\n");
-    
+
     for(int i = 0;i < loop;i ++) {
         vision_cost.tik();
         // printf("vision_ctx->io_num.n_input:%d\n",vision_ctx->io_num.n_input);
@@ -448,10 +473,10 @@ int inference_rknn3_vlm_vision(rknn3_vlm_vision_context* vision_ctx, image_buffe
                 tot_cost = 0.f;
             }
             // printf("[rknn3_model_stress_test_log] vision run: %d/ %d\n",i+1,loop);
-            
+
         }
     }
-    
+
     // Get Output
     // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr, vision_ctx->outputs[0].mem->size);
     // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr, vision_ctx->outputs[0].mem->size);

@@ -8,12 +8,34 @@ else
     set -u  # 旧版 bash 只使用 -u
 fi
 
-[ $# -lt 4 ] && { echo "用法: $0 <RK1820模型>  [loop_time_hours] [count_loop] [device_num]"; exit 1; }
+if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
+    echo "==========================================="
+    echo "RKNN3 CNN Demo 压测工具"
+    echo "==========================================="
+    echo "用法:"
+    echo "  $0 <model_path> <loop_time_hours> <count_loop> <device_id> <devices_core>"
+    echo ""
+    echo "参数说明:"
+    echo "  model_path       指定模型文件的基础路径,要指定到.rknn之前的路径"
+    echo "  loop_time_hours  压测持续时间 (小时)"
+    echo "  count_loop       推理循环次数"
+    echo "  device_id        设备ID (通常为0)"
+    echo "  devices_core     核心列表,空格分隔,如'1 2 3 4'表示使用核心1-4"
+    echo ""
+    echo "使用示例:"
+    echo "  $0 mobilenet_v2 1 100 0 \"1 2 3 4\""
+    echo ""
+    echo "==========================================="
+    exit 1
+fi
+
+[ $# -lt 5 ] && { echo "用法: $0 <model_path> <loop_time_hours> <count_loop> <device_id> <devices_core>"; exit 1; }
 
 model=$1
 time_loop=$2
 cnt_loop=$3
-device_num=$4
+device_id=$4
+devices_core=$5
 
 # 确保使用绝对路径，并安全处理 dirname
 model_path_dir=$(dirname "$model")
@@ -44,25 +66,34 @@ echo "✅ 启动 rknn3_cnn_demo..."
 echo "模型: ${model}"
 echo "循环时间: ${time_loop}"
 echo "循环次数: ${cnt_loop}"
-echo "device_num: ${device_num}"
+echo "指定设备ID: ${device_id}"
+echo "指定核心: ${devices_core}"
 
-for id in $(seq 1 $device_num)
-do
-    for core in {1..8}; do
-        mask=$((1 << (core - 1)))
-        log="${log_pre}_device${id}_core${core}.log"
-        # echo "$log"
-        rknn3_cnn_demo \
-            -m "$RKNN_MODEL" \
-            -w "$WEIGHT_MODEL" \
-            -c "0x$(printf '%02x' $mask)" \
-            -i "$IMG_PATH" \
-            -tl "${time_loop}" \
-            -id "${id-1}" \
-            -cl "${cnt_loop}" >"$log" 2>&1 &
-        pids+=($!)
-    # echo "设备ID:$id,NPU核心：$core"
-    done
+# 获取脚本所在目录
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 核心列表
+core_list="$devices_core"
+
+for core in $core_list; do
+    mask=$((1 << (core - 1)))
+    log="${log_pre}_device${device_id}_core${core}.log"
+
+    # 构建完整命令
+    cmd="rknn3_cnn_demo -m \"$RKNN_MODEL\" -w \"$WEIGHT_MODEL\" -c \"0x$(printf '%02x' $mask)\" -i \"$IMG_PATH\" -tl \"${time_loop}\" -id \"${device_id}\" -cl \"${cnt_loop}\""
+
+    # 输出执行的命令
+    echo ">>> 执行命令: $cmd > $log"
+
+    "rknn3_cnn_demo" \
+        -m "$RKNN_MODEL" \
+        -w "$WEIGHT_MODEL" \
+        -c "0x$(printf '%02x' $mask)" \
+        -i "$IMG_PATH" \
+        -tl "${time_loop}" \
+        -id "${device_id}" \
+        -cl "${cnt_loop}" >"$log" 2>&1 &
+    pids+=($!)
 done
 # 启动 8 个并行任务
 # 等待全部结束
@@ -71,21 +102,32 @@ for pid in "${pids[@]}"; do wait "$pid"; done
 echo "所有进程已完成。"
 
 error_found=0
-for id in $(seq 1 $device_num)
-do
-    echo ""
-    echo "===== 各核结果与总帧率 ====="
+# 统计核心数
+total_cores=$(echo "$devices_core" | wc -w)
 
-    total_fps=0
-    success_cores=0
-    all_fps=0
-    tot_time=0
+echo ""
+echo "===== 各核结果与总帧率 ====="
 
-    for core in {1..8}; do
-        # echo "$device_id"
-        log="${log_pre}_device${id}_core${core}.log"
-        device_id_line=$(grep 'device_id' "$log" 2>/dev/null | tail -n 1)
-        device_id=$(echo "$device_id_line" | awk -F': ' '{print $2}')
+total_fps=0
+success_cores=0
+all_fps=0
+tot_time=0
+
+# 核心列表
+core_list="$devices_core"
+
+for core in $core_list; do
+    log="${log_pre}_device${device_id}_core${core}.log"
+
+    # 检查日志文件是否存在
+    if [ ! -f "$log" ]; then
+        echo "Core $core: 日志文件不存在 ($log)"
+        error_found=$((error_found + 1))
+        continue
+    fi
+
+    device_id_line=$(grep 'device_id' "$log" 2>/dev/null | tail -n 1)
+    device_id_mac=$(echo "$device_id_line" | awk -F': ' '{print $2}')
 
         fps_line=$(grep 'avgFPS' "$log" 2>/dev/null | tail -n 1)
         # echo "$fps_line"
@@ -93,7 +135,7 @@ do
             echo "Core $core: 无效日志或无 FPS 信息"
             continue
         fi
-        
+
         fps=$(echo "$fps_line" | awk -F'avgFPS:' '{print $NF}' | awk '{print $1}')
         # 假设变量 $log_line 是你的日志行
         run_cnt=$(echo "$fps_line" | awk '{print $2}')
@@ -105,7 +147,7 @@ do
             total_fps=$(awk "BEGIN {printf \"%.2f\", $total_fps + $fps}")
             all_fps=$(awk "BEGIN {printf \"%.2f\", $all_fps + $fps *$run_cnt}")
             success_cores=$((success_cores + 1))
-            
+
             # 检查是否成功完成
             if grep -q "rknn3_model_stress_test_done" "$log"; then
                 # 成功且有结束标记，删除临时日志文件
@@ -120,37 +162,32 @@ do
         fi
     done
 
+model_name=$(basename "$1")
+echo "---------------------测试情况小结---------------------"
+echo "RKNN3模型： $1"
+device_id_mac=$(echo "$device_id_line" | awk -F': ' '{print $2}')
+echo -e "$model_name 设备ID: $device_id_mac"
+echo -e "$model_name 成功核心数:       $success_cores / $total_cores"
+echo -e "$model_name 成功核心总帧数:   $all_fps"
+echo -e "$model_name 总耗时:        $tot_time ms"
+echo -e "$model_name 总帧率:           $total_fps"
+echo "---------------------------------------------------"
 
-    #all_fps=$(awk "BEGIN { print $all_fps + $total_fps }")
-
-    model_name=$(basename "$1")
-    echo "---------------------测试情况小结---------------------"
-    echo "RKNN3模型： $1"
-    echo -e "$model_name 设备ID: $device_id"
-    echo -e "$model_name 成功核心数:       $success_cores / 8"
-    echo -e "$model_name 成功核心总帧数:   $all_fps"
-    echo -e "$model_name 总耗时:        $tot_time ms"
-    echo -e "$model_name 总帧率:           $total_fps"
-    echo "---------------------------------------------------"
-
-done
-    # 检查失败情况
-    if [ -n "$(ls -A "$LOG_DIR" 2>/dev/null)" ]; then
-        dest="/data/rknn3_model_stress_test_log/rknn3_${model_dirname}_${start_time}"
-        mkdir -p "$dest"
-        for id in $(seq 1 $device_num) 
-        do
-            cp "${log_pre}_device${id}_core"*.log "$dest/" 2>/dev/null || true
-        done
-        echo ""
-        echo "❌ [ERROR] 部分设备压测存在异常，请检查上述日志。"
-        echo "日志已拷贝到: $dest"
-        # echo "[rknn3_model_stress_test_error] 存在失败用例"#    echo "日志已拷贝到: $dest"
-    else
-        echo ""
-        echo "✅ [SUCCESS] 所有设备压测通过。"
-        # echo "[rknn3_model_stress_test_done] 所有进程成功完成"
-    fi
+# 检查失败情况
+if [ -n "$(ls -A "$LOG_DIR" 2>/dev/null)" ]; then
+    dest="/data/rknn3_model_stress_test_log/rknn3_${model_dirname}_${start_time}"
+    mkdir -p "$dest"
+    cp "${log_pre}_device${device_id}_core"*.log "$dest/" 2>/dev/null || true
+    echo ""
+    echo "❌ [ERROR] 部分设备压测存在异常，请检查上述日志。"
+    echo "日志已拷贝到: $dest"
     rm -rf "$LOG_DIR"
+    exit 1
+else
+    echo ""
+    echo "✅ [SUCCESS] 所有设备压测通过。"
+    rm -rf "$LOG_DIR"
+    exit 0
+fi
 
 

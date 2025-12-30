@@ -16,30 +16,42 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "RKNN3 VLM Demo 压测工具"
     echo "==========================================="
     echo "用法:"
-    echo "  $0 <model_dir> <loop_time_hours> <count_loop> <device_num> "
+    echo "  $0 <model_dir> <loop_time_hours> <count_loop> <device_num> [core_mask(optional)]"
     echo ""
     echo "参数说明:"
     echo "  model_dir        指定模型文件的基础路径,要指定到.rknn之前的路径例如:/userdata/Qwen2.5-VL-3B/Qwen2.5-VL-3B"
-    echo "  loop_time_hours 压测持续时间 (小时)"
-    echo "  count_loop      推理循环次数"
-    echo "  device_num      设备数量 (1-N)"
+    echo "  loop_time_hours  压测持续时间 (小时)"
+    echo "  count_loop       推理循环次数"
+    echo "  device_num       设备数量 (1-N)"
+    echo "  core_mask        核心掩码(可选,16进制),如'0xff'表示全8核,'0x0f'表示核心0-3"
+    echo ""
+    echo "核心掩码示例:"
+    echo "  0xff   - 全8核 (二进制: 11111111)"
+    echo "  0x0f   - 核心0-3 (二进制: 00001111)"
+    echo "  0xf0   - 核心4-7 (二进制: 11110000)"
+    echo "  0x03   - 核心0-1 (二进制: 00000011)"
     echo ""
     echo "当前支持的模型系列:Qwen2.5-VL/Qwen3-VL/FastVLM/InternVL3_5-4B"
     echo ""
     echo "==========================================="
-    exit 0
+    exit 1
 fi
 
-if [ $# -ne 4 ]; then
-    echo "用法: $0 <模型目录> [loop_time_hours] [count_loop] [device_num]"
+if [ $# -lt 4 ]; then
+    echo "用法: $0 <模型目录> <loop_time_hours> <count_loop> <device_num> [core_mask(optional)]"
     exit 1
 fi
 
 # 参数读取
 MODEL_DIR="$1"
-LOOP_TIME="${2:-1}"          # 默认 loop_time = 1 小时
-COUNT_LOOP="${3:-1}"         # 默认 count_loop = 1 次
+LOOP_TIME="$2"
+COUNT_LOOP="$3"
 DEVICE_NUM="$4"
+CORE_MASK="${5:-0xff}"  # 默认全8核
+
+# 将CORE_MASK赋值给Vision和LLM
+VISION_CORE_MASK="$CORE_MASK"
+LLM_CORE_MASK="$CORE_MASK"
 
 echo "${MODEL_DIR}"
 # 模型文件定义
@@ -51,10 +63,6 @@ TOKENIZER="${MODEL_DIR}-llm.tokenizer.gguf"
 EMBEDDING="${MODEL_DIR}-llm.embed.bin"
 IMAGE_PATH="test.jpg"
 PROMPT_FILE="${MODEL_DIR}.ini"
-
-# 核心掩码（根据平台可修改）
-VISION_CORE_MASK="0xff"
-LLM_CORE_MASK="0xff"
 
 # 检查关键文件是否存在
 for f in "$VISION_MODEL" "$LLM_MODEL" "$TOKENIZER" "$EMBEDDING" "$IMAGE_PATH" "$PROMPT_FILE"; do
@@ -68,6 +76,8 @@ echo "✅ 启动 rknn3_vlm_demo..."
 echo "模型目录: $MODEL_DIR"
 echo "Loop 时间: ${LOOP_TIME} 小时"
 echo "循环次数: ${COUNT_LOOP}"
+echo "Vision核心掩码: $VISION_CORE_MASK"
+echo "LLM核心掩码: $LLM_CORE_MASK"
 
 pids=()
 start_time=$(date +%Y%m%d_%H%M%S)
@@ -81,7 +91,7 @@ log_pre="${LOG_DIR}/rknn3_$$"
 
 echo "DEVICE_NUM:$DEVICE_NUM"
 for id in $(seq 1 $DEVICE_NUM)
-do 
+do
     # log="${log_pre}_device${id}.log"
     current_log="${log_pre}_device${id}.log"
     echo "current_log:$current_log"
@@ -137,6 +147,7 @@ rm -rf ${LOG_DIR}
 if [ $error_found -eq 0 ]; then
     # rm -rf ${LOG_DIR}
     echo "✅ [SUCCESS] 所有设备压测通过。"
+    exit 0
 else
     # dest="/data/rknn3_model_stress_test_log/rknn3_${model_dirname}_${start_time}"
     # mkdir -p "$dest"

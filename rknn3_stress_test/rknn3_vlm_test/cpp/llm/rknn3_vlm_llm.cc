@@ -67,6 +67,31 @@ int init_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, const char* model_path, c
         return ret;
     }
 
+    // Query and validate llm core_mask before model init
+    uint32_t model_core_num = 0;
+    ret = rknn3_query(ctx, RKNN3_QUERY_CORE_NUMBER, &model_core_num, sizeof(model_core_num));
+    if (ret < 0) {
+        printf("[rknn3_model_stress_test_error] rknn3_query llm core number failed! ret=%d\n", ret);
+        rknn3_destroy(ctx);
+        return ret;
+    }
+    printf("[rknn3_stress_test_log] LLM model requires %u NPU cores\n", model_core_num);
+    printf("[rknn3_stress_test_log] User specified llm_core_mask: 0x%x\n", core_mask);
+
+    uint32_t core_num_from_mask = 0;
+    for (int i = 0; i < 32; i++) {
+        if (core_mask & (1 << i)) core_num_from_mask++;
+    }
+
+    if (core_num_from_mask != model_core_num) {
+        printf("[rknn3_model_stress_test_error] LLM core_mask 0x%x has %u cores, but model requires %u cores\n",
+               core_mask, core_num_from_mask, model_core_num);
+        printf("[rknn3_model_stress_test_error] Please specify exactly %u cores for llm model\n", model_core_num);
+        rknn3_destroy(ctx);
+        return -1;
+    }
+    printf("[rknn3_stress_test_log] LLM core mask validation passed (%u cores)\n", core_num_from_mask);
+
     //Init RKNN Model
     ret = rknn3_model_init(ctx, &config);
     if (ret < 0) {
@@ -127,7 +152,7 @@ int inference_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, rknn3_llm_multimodal
         printf("[rknn3_model_stress_test_error] llm_ctx or rknn_session is NULL");
         return -1;
     }
-    
+
     int ret;
     rknn3_llm_input inputs[n_inputs];
     rknn3_llm_infer_param llm_infer_param;
@@ -161,7 +186,7 @@ int inference_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, rknn3_llm_multimodal
             return ret;
         }
         RKLLMRunState state = { 0 };
-        
+
         if (ret != RKNN3_SUCCESS) {
             printf("[rknn3_model_stress_test_error] rknn3_session_query_state failed, ret=%d\n", ret);
             return ret;
@@ -171,6 +196,6 @@ int inference_rknn3_vlm_llm(rknn3_vlm_llm_context* llm_ctx, rknn3_llm_multimodal
             printf("llm run: %d / %d\n end\n",(i+1),loop);
         }
     }
-    
+
     return ret;
 }

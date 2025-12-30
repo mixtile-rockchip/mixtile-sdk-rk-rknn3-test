@@ -204,6 +204,17 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
         return -1;
     }
 
+    // Query model required core number
+    uint32_t model_core_num = 0;
+    ret = rknn3_query(ctx, RKNN3_QUERY_CORE_NUMBER, &model_core_num, sizeof(model_core_num));
+    if (ret < 0) {
+        printf("[rknn3_model_stress_test_error] rknn3_query core number failed! ret=%d\n", ret);
+        rknn3_destroy(ctx);
+        return -1;
+    }
+    printf("[rknn3_stress_test_log] Model requires %u NPU cores\n", model_core_num);
+    printf("[rknn3_stress_test_log] User specified core_mask: 0x%x\n", core_mask);
+
     // set config
     memset(&config, 0, sizeof(config));
     config.run_core_mask = core_mask;
