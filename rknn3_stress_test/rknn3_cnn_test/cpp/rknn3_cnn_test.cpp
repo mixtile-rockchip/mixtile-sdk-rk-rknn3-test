@@ -36,7 +36,7 @@ static void dump_tensor_attr(rknn3_tensor_attr* attrs)
         shape_str += ", ";
       }
     }
-  
+
     std::string stride_str = "";
     for (int j = 0; j < attrs->n_stride; j++) {
       stride_str += std::to_string(attrs->stride[j]);
@@ -44,7 +44,7 @@ static void dump_tensor_attr(rknn3_tensor_attr* attrs)
         stride_str += ", ";
       }
     }
-  
+
     printf("Tensor: name=%s, n_dims=%d, shape=[%s], stride=[%s], aligned_size=%ld, layout=%s, dtype=%s, core_id=%d, "
            "qnt_type=%s\n",
            attrs->name, attrs->n_dims, shape_str.c_str(), stride_str.c_str(), attrs->aligned_size, rknn3_get_layout_string(attrs->layout),
@@ -148,7 +148,7 @@ int init_common_img(rknn_common_img_ctx* vision_ctx, const char* model_path, con
     vision_ctx->io_num = io_num;
     for (int i = 0; i < vision_ctx->io_num.n_input; i++) {
         vision_ctx->inputs[i].mem  = rknn3_create_mem(ctx, input_attrs[i].aligned_size, input_attrs[i].core_id, RKNN3_FLAG_MEMORY_CACHEABLE);
-        
+
         vision_ctx->inputs[i].attr = (rknn3_tensor_attr*)malloc(sizeof(rknn3_tensor_attr));
         memcpy(vision_ctx->inputs[i].attr, &(input_attrs[i]), sizeof(rknn3_tensor_attr));
     }
@@ -178,7 +178,7 @@ int init_common_img(rknn_common_img_ctx* vision_ctx, const char* model_path, con
                 vision_ctx->model_height, vision_ctx->model_width, vision_ctx->model_channel);
 
     }
-    else 
+    else
     {
         printf("[rknn3_model_stress_test_error] model is not NHWC/NCHW input layout, model input error!\n");
         return -1;
@@ -391,7 +391,7 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
     image_buffer_t dst_img;
     memset(&dst_img, 0, sizeof(image_buffer_t));
 
-    int infer_cnt = 1;
+    int infer_cnt = 0;
     TIMER tot_cost;
     static float last_print_time = 0.0f;
     float print_interval = 1*1000*60 ; //1ms
@@ -430,7 +430,7 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
         tot_cost.tik();
         static float last_print_time = 0.0f;
         float print_interval = 1*1000*60 ; //1ms
-        
+
         while(1) {
             // printf("---------------------test_by_cdd\n");
             for (int i = 0; i < vision_ctx->io_num.n_input; i++)
@@ -482,12 +482,12 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
             infer_cnt ++;
             // cost.print_time("rknn_vision_test");
             // printf("rknn_cnn_test time_loop: %d / %d ,cost_time: %8.2f\n",i+1,cnt_loop,cost.get_time());
-            
+
         }
     } else{
         float tot_cost = 0.f;
         TIMER sync_cost;
-        
+
         for(int i = 0;i < cnt_loop;i ++) {
             cost.tik();
             sync_cost.tik();
@@ -521,7 +521,7 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
                     break;
                 }
             }
-            
+
             cost.tok();
             tot_cost += cost.get_time();
             sync_cost.tok();
@@ -530,11 +530,11 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
             // cost.print_time("rknn_vision_test");
             printf("rknn_cnn_test cnt_loop: %d / %d ,cost time : %8.2f ms\n",i, cnt_loop,cost.get_time());
         }
-        
+
         float avgCost = tot_cost / (cnt_loop);
         float avgFPS = 1000. / avgCost;
         printf("run %d ,tot_time:%8.2f,avgFPS: %.2f ,avgCost = %8.2f ms\n",cnt_loop,tot_cost,avgFPS,avgCost);
-        
+
     }
         #endif
 
@@ -596,16 +596,16 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
         // printf("Avg FPS  : %.2f, Avg Cost : %8.2f ms\n", avgFPS, avgCost);
 
     }
-    
+
 
 #if 0
     for (uint32_t i = 0; i < vision_ctx->io_num.n_output; i++) {
         rknn3_tensor_attr *output_attr = vision_ctx->outputs[i].attr;
         rknn3_tensor_mem *output_mem = vision_ctx->outputs[i].mem;
         int batch = 1;
-        
+
         // rt_hw_cpu_dcache_ops(RT_HW_CACHE_INVALIDATE, (void*)output_mem->virt_addr, output_mem->size);
-        // int  dst_elems = 
+        // int  dst_elems =
         int aligned_size = output_attr->aligned_size;
         int aligned_type_size = 0;
         if(output_attr->dtype == RKNN3_TENSOR_FLOAT16) {
@@ -639,8 +639,8 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
             if (output_attr->dtype == RKNN3_TENSOR_FLOAT16) {
                 int C1 = output_attr->shape[1];
                 int C2 = output_attr->shape[4];
-                int hw = output_attr->shape[2] * output_attr->shape[3]; 
-                // int channel = 
+                int hw = output_attr->shape[2] * output_attr->shape[3];
+                // int channel =
                 NC1HWC2_fp16_to_NCHW_fp32((float16 *)output_mem->virt_addr, output_data, batch, C1, C2, hw, channel, h, w);
             } else if (output_attr->dtype == RKNN3_TENSOR_INT8) {
                 int C1 = output_attr->shape[1];
@@ -681,7 +681,7 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
         }
     }
 
-#endif 
+#endif
     // Get Output
     // printf("......vision_ctx->outputs[0].mem->size:%d\n",vision_ctx->outputs[0].mem->size);
 
