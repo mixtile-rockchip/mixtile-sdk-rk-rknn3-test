@@ -177,7 +177,7 @@ scan_model_directories() {
     return 0
 }
 
-# Scan for ALL available model directories (all types)
+# Scan for ALL available model directories (all types) - MODIFIED: Filter out core-* models
 scan_all_model_directories() {
     local -n result_array="$1"  # Use nameref to modify the passed array
 
@@ -190,8 +190,12 @@ scan_all_model_directories() {
         declare -A found_models
         if scan_model_directories "$model_type" found_models; then
             for index in $(echo "${!found_models[@]}" | tr ' ' '\n' | sort -n); do
-                ((count++))
-                result_array["$count"]="${found_models[$index]} $model_type"
+                local model_name="${found_models[$index]}"
+                # Filter out models containing "core-"
+                if [[ ! "$model_name" =~ core- ]]; then
+                    ((count++))
+                    result_array["$count"]="$model_name $model_type"
+                fi
             done
         fi
     done
@@ -816,11 +820,12 @@ loop_test_all_models() {
     done
     echo
 
-    # Get test parameters
+    # Get test parameters - MODIFIED: Remove get_devices_core, device core will be set per model type
     echo -e "${CYAN}Setting test parameters for all models:${NC}"
     get_loop
     get_devices_id
-    get_devices_core
+    # Device core will be set per model type in the loop below
+    echo "Note: Device core will be set automatically based on model type (0x01 for CNN, 0xff for LLM/VLM)"
 
     local llm_seq_len=512
     local llm_new_tokens=512
@@ -861,7 +866,7 @@ loop_test_all_models() {
     echo -e "${RED}WARNING: This will test all ${#all_models[@]} models with the following parameters:${NC}"
     echo "Loops: $LOOP"
     echo "Device ID: $DEVICES_ID"
-    echo "Device Core: $DEVICES_CORE"
+    echo "Device Core: Auto-set (0x01 for CNN, 0xff for LLM/VLM)"
     if [[ "$has_llm" == true ]]; then
         echo "LLM Sequence Length: $llm_seq_len"
         echo "LLM New Tokens: $llm_new_tokens"
@@ -884,7 +889,7 @@ loop_test_all_models() {
     echo
     echo -e "${GREEN}Starting loop testing of all models...${NC}"
     log_message "=== Starting loop testing of all models ==="
-    log_message "Parameters - Loops: $LOOP, Device ID: $DEVICES_ID, Device Core: $DEVICES_CORE, LLM Seq Len: $llm_seq_len, LLM New Tokens: $llm_new_tokens"
+    log_message "Parameters - Loops: $LOOP, Device ID: $DEVICES_ID, Device Core: Auto-set, LLM Seq Len: $llm_seq_len, LLM New Tokens: $llm_new_tokens"
     log_message "Execution mode: $( [[ "$run_in_background" == "true" ]] && echo "Concurrent" || echo "Sequential" )"
 
     local total_models=${#all_models[@]}
@@ -900,6 +905,12 @@ loop_test_all_models() {
             local model_name="${model_info[0]}"
             local model_type="${model_info[1]}"
             local model_path=$(get_model_path "$model_name")
+
+            # MODIFIED: Set device core based on model type
+            local devices_core="0xff"  # Default for LLM/VLM
+            if [[ "$model_type" == "cnn" ]]; then
+                devices_core="0x01"  # CNN uses 0x01
+            fi
 
             echo
             echo -e "${BLUE}========================================${NC}"
@@ -917,15 +928,15 @@ loop_test_all_models() {
                 continue
             fi
 
-            # Start background test
+            # Start background test with model-specific device core
             if [[ "$model_type" == "llm" ]]; then
-                if start_background_test "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE" "$llm_seq_len" "$llm_new_tokens"; then
+                if start_background_test "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "$llm_seq_len" "$llm_new_tokens"; then
                     ((successful_tests++))
                 else
                     ((failed_tests++))
                 fi
             else
-                if start_background_test "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE" "512" "512"; then
+                if start_background_test "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "512" "512"; then
                     ((successful_tests++))
                 else
                     ((failed_tests++))
@@ -949,6 +960,12 @@ loop_test_all_models() {
             local model_type="${model_info[1]}"
             local model_path=$(get_model_path "$model_name")
 
+            # MODIFIED: Set device core based on model type
+            local devices_core="0xff"  # Default for LLM/VLM
+            if [[ "$model_type" == "cnn" ]]; then
+                devices_core="0x01"  # CNN uses 0x01
+            fi
+
             echo
             echo -e "${BLUE}========================================${NC}"
             echo -e "${GREEN}Testing model $current_model of $total_models${NC}"
@@ -965,12 +982,12 @@ loop_test_all_models() {
                 continue
             fi
 
-            # Test the model with appropriate parameters
+            # Test the model with appropriate parameters and model-specific device core
             local test_result
             if [[ "$model_type" == "llm" ]]; then
-                test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE" "$llm_seq_len" "$llm_new_tokens"
+                test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "$llm_seq_len" "$llm_new_tokens"
             else
-                test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE" "512" "512"
+                test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "512" "512"
             fi
 
             test_result=$?
