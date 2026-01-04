@@ -50,9 +50,8 @@ model_dirname=$(basename "$model_path_dir")
 pids=()
 start_time=$(date +%Y%m%d_%H%M%S)
 
-LOG_DIR="/tmp/rknn3_${model_dirname}_${start_time}_device${DEVICE_ID}_log"
+LOG_DIR="/tmp"
 echo "日志目录: ${LOG_DIR}"
-rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 log_pre="${LOG_DIR}/rknn3_$$"
 log_files=()
@@ -173,11 +172,12 @@ echo "总帧数: $total_frames"
 echo "=================================================="
 
 # 处理日志保存
-dest="/data/rknn3_model_stress_test_log/rknn3_${model_dirname}_${start_time}"
+dest="/data/rknn3_model_stress_test_log"
 mkdir -p "$dest"
-cp "${LOG_DIR}"/* "$dest/" 2>/dev/null || true
-echo "日志拷贝到：$dest"
-rm -rf ${LOG_DIR}
+cp "$current_log" "$dest/" 2>/dev/null || true
+echo "日志拷贝到：$dest/$(basename $current_log)"
+# 只删除自己的临时日志文件，不删除整个目录（可能被其他进程使用）
+rm -f "$current_log"
 
 if [ $error_found -eq 0 ]; then
     echo ""

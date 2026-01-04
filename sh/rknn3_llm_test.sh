@@ -64,13 +64,12 @@ echo "核心掩码: $CORE_MASK"
 pids=()
 start_time=$(date +%Y%m%d_%H%M%S)
 model_dirname=$(basename "$MODEL_DIR")
-LOG_DIR="/tmp/rknn3_${model_dirname}_log"
+LOG_DIR="/tmp"
 echo "日志目录: ${LOG_DIR}"
-rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 log_pre="${LOG_DIR}/rknn3_$$"
 
-current_log="${log_pre}_device${DEVICE_ID}.log"
+current_log="${log_pre}_${model_dirname}_${start_time}_device${DEVICE_ID}_${CORE_MASK}.log"
 log_files+=("$current_log")
 
 rknn3_llm_demo \
@@ -109,11 +108,12 @@ for log in "${log_files[@]}"; do
     echo ""
 done
 
-dest="/data/rknn3_model_stress_test_log/rknn3_${model_dirname}_${start_time}"
+dest="/data/rknn3_model_stress_test_log"
 mkdir -p "$dest"
-cp "${LOG_DIR}"/* "$dest/" 2>/dev/null || true
-echo "日志拷贝到：$dest"
-rm -rf ${LOG_DIR}
+cp "$current_log" "$dest/" 2>/dev/null || true
+echo "日志拷贝到：$dest/$(basename $current_log)"
+# 只删除自己的临时日志文件，不删除整个目录（可能被其他进程使用）
+rm -f "$current_log"
 
 if [ $error_found -eq 0 ]; then
     # rm -rf ${LOG_DIR}
