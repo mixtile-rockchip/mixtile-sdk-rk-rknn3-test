@@ -16,13 +16,13 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "RKNN3 VLM Demo 压测工具"
     echo "==========================================="
     echo "用法:"
-    echo "  $0 <model_dir> <loop_time_hours> <count_loop> <device_num> [core_mask(optional)]"
+    echo "  $0 <model_dir> <loop_time_hours> <count_loop> <device_id> [core_mask(optional)]"
     echo ""
     echo "参数说明:"
     echo "  model_dir        指定模型文件的基础路径,要指定到.rknn之前的路径例如:/userdata/Qwen2.5-VL-3B/Qwen2.5-VL-3B"
     echo "  loop_time_hours  压测持续时间 (小时)"
     echo "  count_loop       推理循环次数"
-    echo "  device_num       设备数量 (1-N)"
+    echo "  device_id        指定设备ID (通常为0)"
     echo "  core_mask        核心掩码(可选,16进制),如'0xff'表示全8核,'0x0f'表示核心0-3"
     echo ""
     echo "核心掩码示例:"
@@ -38,7 +38,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
 fi
 
 if [ $# -lt 4 ]; then
-    echo "用法: $0 <模型目录> <loop_time_hours> <count_loop> <device_num> [core_mask(optional)]"
+    echo "用法: $0 <模型目录> <loop_time_hours> <count_loop> <device_id> [core_mask(optional)]"
     exit 1
 fi
 
@@ -46,7 +46,7 @@ fi
 MODEL_DIR="$1"
 LOOP_TIME="$2"
 COUNT_LOOP="$3"
-DEVICE_NUM="$4"
+DEVICE_ID="$4"
 CORE_MASK="${5:-0xff}"  # 默认全8核
 
 # 将CORE_MASK赋值给Vision和LLM
@@ -76,8 +76,8 @@ echo "✅ 启动 rknn3_vlm_demo..."
 echo "模型目录: $MODEL_DIR"
 echo "Loop 时间: ${LOOP_TIME} 小时"
 echo "循环次数: ${COUNT_LOOP}"
-echo "Vision核心掩码: $VISION_CORE_MASK"
-echo "LLM核心掩码: $LLM_CORE_MASK"
+echo "指定设备ID: ${DEVICE_ID}"
+echo "核心掩码: $CORE_MASK"
 
 pids=()
 start_time=$(date +%Y%m%d_%H%M%S)
@@ -89,31 +89,26 @@ rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 log_pre="${LOG_DIR}/rknn3_$$"
 
-echo "DEVICE_NUM:$DEVICE_NUM"
-for id in $(seq 1 $DEVICE_NUM)
-do
-    # log="${log_pre}_device${id}.log"
-    current_log="${log_pre}_device${id}.log"
-    echo "current_log:$current_log"
-    log_files+=("$current_log")
-    # 执行推理命令
-    rknn3_vlm_demo \
-        -vm "$VISION_MODEL" \
-        -vw "$VISION_WEIGHT" \
-        -lm "$LLM_MODEL" \
-        -lw "$LLM_WEIGHT" \
-        -tk "$TOKENIZER" \
-        -em "$EMBEDDING" \
-        -vc "$VISION_CORE_MASK" \
-        -lc "$LLM_CORE_MASK" \
-        -im "$IMAGE_PATH" \
-        -pi "$PROMPT_FILE" \
-        -vl "$COUNT_LOOP" \
-        -ll "$COUNT_LOOP" \
-        -tl "$LOOP_TIME" \
-        -id "$id-1" >"$current_log" 2>&1 &
-        pids+=($!)
-done
+current_log="${log_pre}_device${DEVICE_ID}.log"
+echo "current_log:$current_log"
+log_files+=("$current_log")
+# 执行推理命令
+rknn3_vlm_demo \
+    -vm "$VISION_MODEL" \
+    -vw "$VISION_WEIGHT" \
+    -lm "$LLM_MODEL" \
+    -lw "$LLM_WEIGHT" \
+    -tk "$TOKENIZER" \
+    -em "$EMBEDDING" \
+    -vc "$VISION_CORE_MASK" \
+    -lc "$LLM_CORE_MASK" \
+    -im "$IMAGE_PATH" \
+    -pi "$PROMPT_FILE" \
+    -vl "$COUNT_LOOP" \
+    -ll "$COUNT_LOOP" \
+    -tl "$LOOP_TIME" \
+    -id "${DEVICE_ID}" >"$current_log" 2>&1 &
+    pids+=($!)
 
 echo "等待所有进程完成..."
 for pid in "${pids[@]}"; do wait "$pid"; done
