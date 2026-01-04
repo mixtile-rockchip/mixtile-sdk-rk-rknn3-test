@@ -22,6 +22,9 @@
 // #include "rknn_api.h"
 #include <math.h>
 
+// External variables from main.cc
+extern int32_t gen_tokens;
+
 int init_internal_share(rknn_app_context_t* app_ctx, uint32_t core_mask_vision, uint32_t core_mask_llm)
 {
     int ret = -1;
@@ -126,7 +129,7 @@ int init_internal_share(rknn_app_context_t* app_ctx, uint32_t core_mask_vision, 
             internal_mems_llm[i] = internal_mems_vision[llm_to_vision[i]];
             continue;
         }
-        internal_mems_llm[i] = rknn3_create_mem(app_ctx->vision.rknn_ctx, core_mem_sizes_llm[i].internal_size, core_mem_sizes_llm[i].core_id, RKNN3_FLAG_MEMORY_CACHEABLE); 
+        internal_mems_llm[i] = rknn3_create_mem(app_ctx->vision.rknn_ctx, core_mem_sizes_llm[i].internal_size, core_mem_sizes_llm[i].core_id, RKNN3_FLAG_MEMORY_CACHEABLE);
         if (!internal_mems_llm[i]) {    // 都使用vision.rknn_ctx分配, 方便后面释放
             return -1;
         }
@@ -178,7 +181,7 @@ int init_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                         const char* vision_model_path,
                         const char* vision_weight_path,
                         rknn3_llm_param* params, int n_params,
-                        RKLLMCallback callback, 
+                        RKLLMCallback callback,
                         uint32_t vision_core_mask,
                         uint32_t llm_core_mask)
 {
@@ -220,7 +223,7 @@ int init_rknn3_vlm_model(rknn_app_context_t* app_ctx,
             }
         }
     }
-    
+
     printf("--> init internal share\n");
     ret = init_internal_share(app_ctx, vision_core_mask, llm_core_mask);
     if (ret < 0)
@@ -241,7 +244,7 @@ int release_rknn3_vlm_model(rknn_app_context_t* app_ctx)
                 rknn3_destroy_mem(app_ctx->llm.rknn_ctx, app_ctx->llm.deepstack_tensor[i].mem);
                 // rknn3_destroy_mem(llm_ctx->rknn_ctx, llm_ctx->deepstack_tensor[i].mem);
                 app_ctx->llm.deepstack_tensor[i].mem = nullptr;
-            }   
+            }
         }
     }
     release_rknn3_vlm_vision(&(app_ctx->vision));
@@ -250,10 +253,29 @@ int release_rknn3_vlm_model(rknn_app_context_t* app_ctx)
     return 0;
 }
 
-void check_perfance(float last_perf, float cur_perf) {
+void check_perfance(float last_perf, float cur_perf, int32_t last_gen_tokens, int32_t cur_gen_tokens) {
     if (last_perf <= 0) {
         fprintf(stderr, "Error: last_perf must be positive.\n");
         return;
+    }
+
+    // 检测 gen_tokens 是否一致
+    if (last_gen_tokens != cur_gen_tokens) {
+        printf("\n+------------------+--------------------+\n");
+        printf("| Stage            | Perf               |\n");
+        printf("+------------------+--------------------+\n");
+        printf("| %-16s | %-14.f(ms) |\n", "Vision", vision_cost.get_time());
+        // printf("| %-16s | %-10.d(tokens) |\n", "SeqLen",result->perf.prefill_tokens);
+        // printf("| %-16s | %-10.d(tokens) |\n", "GenLen",result->perf.generate_tokens);
+        // printf("| %-16s | %-8.3f(tokens/s) |\n", "Pefill",result->perf.prefill_tokens/result->perf.prefill_time_ms*1000.);
+        printf("| %-16s | %-14.3f(ms) |\n", "TTFT", llm_perfill.get_time());
+        printf("| %-16s | %-8.3f(tokens/s) |\n", "TPS", tps);
+        printf("| %-16s | %-10d        |\n", "GenTokens", cur_gen_tokens);
+        printf("+------------------+--------------------+\n");
+
+        fprintf(stderr, "[rknn3_model_stress_test_error] gen_tokens inconsistency! (last=%d, cur=%d)\n",
+                last_gen_tokens, cur_gen_tokens);
+        exit(EXIT_FAILURE);  // 异常退出
     }
 
     float diff = fabsf(cur_perf - last_perf);
@@ -269,6 +291,7 @@ void check_perfance(float last_perf, float cur_perf) {
         // printf("| %-16s | %-8.3f(tokens/s) |\n", "Pefill",result->perf.prefill_tokens/result->perf.prefill_time_ms*1000.);
         printf("| %-16s | %-14.3f(ms) |\n", "TTFT", llm_perfill.get_time());
         printf("| %-16s | %-8.3f(tokens/s) |\n", "TPS", tps);
+        printf("| %-16s | %-10d        |\n", "GenTokens", cur_gen_tokens);
         printf("+------------------+--------------------+\n");
 
         fprintf(stderr, "[rknn3_model_stress_test_error] perf jitter %.2f%% exceeds 20%% (last=%.3f, cur=%.3f)\n",
@@ -280,7 +303,7 @@ void check_perfance(float last_perf, float cur_perf) {
     }
 }
 
-int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx, 
+int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                                 image_buffer_t* img,
                                 rknn3_llm_multimodal_tensor tensor,
                                 int vision_loop,
@@ -297,6 +320,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
     static float last_vision_cost = 0.f;
     static float last_ttft = 0.f;
     static float last_tps = 0.f;
+    static int32_t last_gen_tokens = 0;
 
     int acc_cnt = 0;
     float acc_ms = 0.f;
@@ -315,7 +339,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                 printf("[rknn3_model_stress_test_error] inference rknn3_vlm vision model fail! ret=%d\n", ret);
                 return ret;
             }
-              
+
             ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs,1);
             if (ret != 0)
             {
@@ -350,7 +374,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                     printf("[rknn3_model_stress_test_error] inference rknn3_vlm vision model fail! ret=%d\n", ret);
                     return ret;
                 }
-                
+
                 ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs,1);
                 if (ret != 0)
                 {
@@ -359,12 +383,13 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                 };
                 printf("vlm run: %d/%d\n",i+1,vision_loop);
                 if(last_vision_cost != 0.f && (i > 10)) { // 为了防止不稳定，10次以后才开始性能测试
-                    check_perfance(last_vision_cost,vision_cost.get_time());
-                    check_perfance(last_ttft,llm_perfill.get_time());
-                    check_perfance(last_tps,tps);
+                    check_perfance(last_vision_cost,vision_cost.get_time(), last_gen_tokens, gen_tokens);
+                    check_perfance(last_ttft,llm_perfill.get_time(), last_gen_tokens, gen_tokens);
+                    check_perfance(last_tps,tps, last_gen_tokens, gen_tokens);
                     last_vision_cost = vision_cost.get_time();
                     last_ttft = llm_perfill.get_time();
                     last_tps = tps;
+                    last_gen_tokens = gen_tokens;
                 }
 
             }
@@ -399,7 +424,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
     if (!is_time_mode && !is_equal_loop) {
         ret = inference_rknn3_vlm_vision(&(app_ctx->vision), img, vision_loop);
         if (ret == 0) {
-            
+
             ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs, llm_loop);
         }
         if (ret != 0) {
@@ -425,7 +450,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
 
                 ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs, 1);
             }
-            
+
             if (ret != 0) {
                 printf("[rknn3_model_stress_test_error] inference fail! ret=%d\n", ret);
                 return ret;
@@ -438,10 +463,10 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
             one_infer_time.tok();
             // if (!is_time_mode) {
             //     printf("\n vlm run: %d/%d\n", iter, vision_loop);
-            // } 
+            // }
             // else {
             //     infer_cost_time.print_time("cost_time:");
-            // } 
+            // }
             acc_cnt += 1;
             acc_ms += one_infer_time.get_time();
             if(acc_cnt >= 100) {
@@ -452,26 +477,27 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
 
 
             if (last_vision_cost != 0.f && iter > 10) {
-                check_perfance(last_vision_cost, vision_cost.get_time());
-                check_perfance(last_ttft, llm_perfill.get_time());
-                check_perfance(last_tps, tps);
-                
+                check_perfance(last_vision_cost, vision_cost.get_time(), last_gen_tokens, gen_tokens);
+                check_perfance(last_ttft, llm_perfill.get_time(), last_gen_tokens, gen_tokens);
+                check_perfance(last_tps, tps, last_gen_tokens, gen_tokens);
+
                 last_vision_cost = vision_cost.get_time();
                 last_ttft = llm_perfill.get_time();
                 last_tps = tps;
+                last_gen_tokens = gen_tokens;
             }
             if (is_time_mode) {
-                if (current_total_ms >= time_limit_ms) 
+                if (current_total_ms >= time_limit_ms)
                     break;
             } else {
-                if (iter >= max_iters) 
+                if (iter >= max_iters)
                     break;
             }
         }
     }
 
     #endif
-    
+
     if(ret == 0) {
         printf("[rknn3_model_stress_test_done] rknn3_vlm_demo run done\n");
         printf("\n+------------------+--------------------+\n");
@@ -484,8 +510,8 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
         printf("| %-16s | %-14.3f(ms) |\n", "TTFT", llm_perfill.get_time());
         printf("| %-16s | %-8.3f(tokens/s) |\n", "TPS", tps);
         printf("+------------------+--------------------+\n");
-        
+
     }
-    
+
     return ret;
 }

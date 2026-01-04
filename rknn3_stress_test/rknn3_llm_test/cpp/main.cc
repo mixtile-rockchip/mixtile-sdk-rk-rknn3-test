@@ -159,26 +159,26 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
         printf("[rknn3_stress_test_error] rknn3_find_devices fail! ret=%d, devs.n_devices = %d\n", ret, devs.n_devices);
         return -1;
     }
- 
- 
+
+
     // 检查devices指针是否有效
     if (devs.devices == NULL) {
         printf("[rknn3_stress_test_error] rknn3_find_devices returned n_devices > 0 but devices is NULL!\n");
         return -1;
     }
-    
+
     // 检查第一个设备的ID是否有效
     if (devs.devices[0].id == NULL) {
         printf("[rknn3_stress_test_error] device[0].id is NULL!\n");
         return -1;
     }
-    
+
     printf("[rknn3_stress_test_log] device[0].id=%s\n", devs.devices[0].id);
-    
+
     // init context
     rknn3_init_extend extend;
     memset(&extend, 0, sizeof(extend));
-    
+
      // 根据是否指定了设备ID来设置
     if (device_id != nullptr) {
         // 使用指定的设备ID
@@ -188,7 +188,7 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
         // 多个设备时，使用第一个设备的ID
         extend.device_id = devs.devices[0].id;
         printf("[rknn3_stress_test_log] Using first device ID: %s\n", extend.device_id);
-    } 
+    }
     // memcpy(device_id_mac,)
     ret = rknn3_init(&ctx, &extend);
     if (ret < 0) {
@@ -287,10 +287,17 @@ void print_usage(char *argv[]) {
     return;
 }
 
-static void check_perfance(float last_perf, float cur_perf) {
+static void check_perfance(float last_perf, float cur_perf, int32_t last_decode_tokens, int32_t cur_decode_tokens) {
     if (last_perf <= 0) {
         fprintf(stderr, "Error: last_perf must be positive.\n");
         return;
+    }
+
+    // 检测 decode_tokens 是否一致
+    if (last_decode_tokens != cur_decode_tokens) {
+        fprintf(stderr, "[rknn3_model_stress_test_error] decode_tokens inconsistency! (last=%d, cur=%d)\n",
+                last_decode_tokens, cur_decode_tokens);
+        exit(EXIT_FAILURE);  // 异常退出
     }
 
     float diff = fabsf(cur_perf - last_perf);
@@ -313,7 +320,7 @@ int main(int argc, char **argv) {
     char *weight_path =  NULL;
     const char *tokenizer_path =  NULL;
     const char *embedding_path =  NULL;
-    // const char *device_id = NULL; 
+    // const char *device_id = NULL;
     int32_t max_context_len =  NULL;
     uint64_t n_input_tokens = 128;
     int32_t max_new_tokens = 128;
@@ -383,6 +390,7 @@ int main(int argc, char **argv) {
     float infer_total_time = 0.f;
 
     float last_time = 0.0f;
+    int32_t last_decode_tokens = 0;
     TIMER cost_time;    // 记录累计运行总时间
     TIMER cur_time;     // 记录当前单次推理时间
     float print_log_ms = 1.f *1000.f*60.f; // 1min print
@@ -515,11 +523,19 @@ int main(int argc, char **argv) {
         total_time = cur_time.get_time(); // 当前单次耗时
         infer_total_time = cost_time.get_time(); // 累计运行耗时
 
+        // 查询当前 state 以获取 decode_tokens
+        ret = rknn3_session_query_state(session, &state);
+        if (ret != RKNN3_SUCCESS) {
+            printf("[rknn3_model_stress_test_error] rknn3_session_query_state failed during loop, ret=%d\n", ret);
+            goto exit;
+        }
+
         // 4. 性能波动检查
         if (last_time != 0.0f || (time_loop != 0 ? infer_total_time > 5000.0f : iter > 10)) {
-            check_perfance(last_time, total_time);
+            check_perfance(last_time, total_time, last_decode_tokens, state.n_decode_tokens);
         }
         last_time = total_time;
+        last_decode_tokens = state.n_decode_tokens;
 
         // 5. 迭代计数更新
         iter++;
@@ -531,7 +547,7 @@ int main(int argc, char **argv) {
             acc_cnt = 0;
             acc_ms = 0.0f;
         }
-        
+
         // 6. 统一退出条件判断
         if (time_loop != 0.f) {
             // 时间模式：达到指定小时数退出
@@ -551,7 +567,7 @@ int main(int argc, char **argv) {
 
     ret = rknn3_session_query_state(session, &state);
     // if (ret == RKNN3_SUCCESS) {
-        
+
     // }
 
     ret = rknn3_session_query_state(session, &state);
@@ -559,8 +575,8 @@ int main(int argc, char **argv) {
         printf("[rknn3_model_stress_test_error] rknn3_session_query_state failed, ret=%d\n", ret);
         goto exit;
     }
-     
-    
+
+
 exit:
     if (session) {
         rknn3_session_destroy(session);
@@ -589,7 +605,7 @@ exit:
         if (last_slash != NULL) {
             filename = last_slash + 1;
         } else {
-            filename = model_path;     
+            filename = model_path;
         }
 
         char model_name[256];
@@ -617,12 +633,12 @@ exit:
         if (state.n_decode_tokens > 0) {
             tpot = decode_time_ms.get_time() / state.n_decode_tokens;
             tps = state.n_decode_tokens / (decode_time_ms.get_time() / 1000.0);
-           
+
         }
         printf("[rknn3_model_stress_test_done]\n");
         // 总时间
         float final_total_time = (first_token.get_time() + decode_time_ms.get_time()) / 1000.0;
-       
+
         printf("\n===== RKNN3_LLM_TEST 结果汇总 =====\n\n");
         printf("RKNN3模型: %s\n",model_name);
         printf("%s RK1820 deviceID: %s\n",model_name,device_id_mac);
