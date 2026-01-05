@@ -71,7 +71,7 @@ int result_callback(void *userdata, RKLLMResult *result, LLMCallState state) {
         llm_decode.tok();
         first_tokens = 1;
         tps = gen_tokens / llm_decode.get_time() * 1000.f;
-        
+
         // printf("\n\n--------------------Finished-------------------- \n");
         return 0;
     } else if (state == RKLLM_RUN_WAITING) {
@@ -84,14 +84,14 @@ int result_callback(void *userdata, RKLLMResult *result, LLMCallState state) {
         printf("\n\n-----------------------Stop--------------------- \n");
         return 0;
     } else if (state == RKLLM_RUN_NORMAL) {
-        
+
         if (first_tokens) {
             llm_decode.tik();
             llm_perfill.tok();
             vl_cost.tok();
             first_tokens = 0;
             gen_tokens = 1;
-            
+
         }
         else {
             gen_tokens += 1;
@@ -381,7 +381,7 @@ int main(int argc, char **argv) {
     rknn_app_ctx.vision.model_height = pruned_model_height;
     rknn_app_ctx.vision.device_id = device_id;
     rknn_app_ctx.llm.device_id = device_id;
-    
+
     // printf("rknn_app_ctx.vision.model_width:%d\n",rknn_app_ctx.vision.model_width);
     // printf("==================================rknn_app_ctx.llm.system_prompt: %s,system_prompt:%s\n",rknn_app_ctx.llm.system_prompt,system_prompt);
     // printf("==================================rknn_app_ctx.llm.prefix_prompt: %s\n",rknn_app_ctx.llm.prefix_prompt);
@@ -390,7 +390,7 @@ int main(int argc, char **argv) {
         printf("[rknn3_model_stress_test_error] init_rknn3_vlm_model fail! ret=%d llm_model_path=%s vision_model_path=%s\n", ret, llm_model_path, vision_model_path);
         goto out;
     }
-    
+
     // Image Embed
     for (size_t i = 0; i < rknn_app_ctx.vision.embeds_ndims; i++) {
         embed_elems *= rknn_app_ctx.vision.embeds_shape[i];
@@ -440,7 +440,7 @@ int main(int argc, char **argv) {
         if (last_slash != NULL) {
             filename = last_slash + 1;
         } else {
-            filename = llm_model_path;     
+            filename = llm_model_path;
         }
 
         char model_name[256];
@@ -452,16 +452,16 @@ int main(int argc, char **argv) {
                 *last_dot = '\0';
             }
         }
-        printf("\n===== RKNN3_VLM_TEST 结果汇总 =====\n\n");
+        printf("\n===== RKNN3_VLM_TEST Results Summary =====\n\n");
         printf("RK1820 deviceID: %s\n",rknn_app_ctx.llm.device_mac);
-        printf("RKNN3模型: %s\n",model_name);
-        printf("%s 总耗时：%12.3f (ms)\n",model_name,infer_cost_time.get_time());
-        printf("%s 总推理次数: %d\n",model_name,infer_loop_cnt);
+        printf("RKNN3 Model: %s\n",model_name);
+        printf("%s Total time: %12.3f (ms)\n",model_name,infer_cost_time.get_time());
+        printf("%s Total runs: %d\n",model_name,infer_loop_cnt);
         printf("\n=================================\n");
 
 
     }
-    
+
 
 
 out:

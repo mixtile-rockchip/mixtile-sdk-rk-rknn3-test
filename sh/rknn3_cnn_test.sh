@@ -5,97 +5,100 @@ echo performance | tee $(find /sys/ -name *governor)
 if [[ "${BASH_VERSION%%.*}" -ge 4 ]]; then
     set -uo pipefail
 else
-    set -u  # 旧版 bash 只使用 -u
+    set -u  # Old bash versions only use -u
 fi
+
+# Control whether to delete temporary log files (default: true)
+CLEANUP_TEMP_LOG="${CLEANUP_TEMP_LOG:-true}"
 
 if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "==========================================="
-    echo "RKNN3 CNN Demo 压测工具"
+    echo "RKNN3 CNN Demo Stress Test Tool"
     echo "==========================================="
-    echo "用法:"
+    echo "Usage:"
     echo "  $0 <model_path> <loop_time_hours> <count_loop> <device_id> [core_mask(optional)]"
     echo ""
-    echo "参数说明:"
-    echo "  model_path       指定模型文件的基础路径,要指定到.rknn之前的路径"
-    echo "  loop_time_hours  压测持续时间 (小时)"
-    echo "  count_loop       推理循环次数"
-    echo "  device_id        指定设备ID (通常为0)"
-    echo "  core_mask        核心掩码(可选,16进制),如'0xff'表示全8核,'0x0f'表示核心0-3"
+    echo "Parameters:"
+    echo "  model_path       Model file base path (before .rknn extension)"
+    echo "  loop_time_hours  Stress test duration (hours)"
+    echo "  count_loop       Inference loop count"
+    echo "  device_id        Device ID (typically 0)"
+    echo "  core_mask        Core mask (optional, hex), e.g., '0xff' for all 8 cores, '0x0f' for cores 0-3"
     echo ""
-    echo "核心掩码示例:"
-    echo "  0xff   - 全8核 (二进制: 11111111)"
-    echo "  0x0f   - 核心0-3 (二进制: 00001111)"
-    echo "  0xf0   - 核心4-7 (二进制: 11110000)"
-    echo "  0x01   - 仅核心0 (二进制: 00000001)"
+    echo "Core mask examples:"
+    echo "  0xff   - All 8 cores (binary: 11111111)"
+    echo "  0x0f   - Cores 0-3 (binary: 00001111)"
+    echo "  0xf0   - Cores 4-7 (binary: 11110000)"
+    echo "  0x01   - Core 0 only (binary: 00000001)"
     echo ""
-    echo "使用示例:"
+    echo "Usage example:"
     echo "  $0 mobilenet_v2 1 100 0 0x01"
     echo ""
     echo "==========================================="
     exit 1
 fi
 
-[ $# -lt 4 ] && { echo "用法: $0 <model_path> <loop_time_hours> <count_loop> <device_id> [core_mask(optional)]"; exit 1; }
+[ $# -lt 4 ] && { echo "Usage: $0 <model_path> <loop_time_hours> <count_loop> <device_id> [core_mask(optional)]"; exit 1; }
 
-model=$1
-time_loop=$2
-cnt_loop=$3
+MODEL=$1
+TIME_LOOP=$2
+COUNT_LOOP=$3
 DEVICE_ID=$4
-CORE_MASK="${5:-0x01}"  # 默认全1核
+CORE_MASK="${5:-0x01}"  # Default: single core
 
-# 确保使用绝对路径，并安全处理 dirname
-model_path_dir=$(dirname "$model")
+# Ensure absolute path and safely handle dirname
+model_path_dir=$(dirname "$MODEL")
 model_dirname=$(basename "$model_path_dir")
 
 pids=()
 start_time=$(date +%Y%m%d_%H%M%S)
 
 LOG_DIR="/tmp"
-echo "日志目录: ${LOG_DIR}"
+echo "Log directory: ${LOG_DIR}"
 mkdir -p "$LOG_DIR"
 log_pre="${LOG_DIR}/rknn3_$$"
 log_files=()
 
-RKNN_MODEL=${model}.rknn
-WEIGHT_MODEL=${model}.weight
+RKNN_MODEL=${MODEL}.rknn
+WEIGHT_MODEL=${MODEL}.weight
 IMG_PATH="test.jpg"
 for f in "$RKNN_MODEL" "$WEIGHT_MODEL" "$IMG_PATH"; do
     if [ ! -f "$f" ]; then
-        echo "❌ miss file: $f"
+        echo "[ERROR] Missing file: $f"
         exit 1
     fi
 done
 
-echo "✅ 启动 rknn3_cnn_demo..."
-echo "模型: ${model}"
-echo "循环时间: ${time_loop} 小时"
-echo "循环次数: ${cnt_loop}"
-echo "指定设备ID: ${DEVICE_ID}"
-echo "核心掩码: ${CORE_MASK}"
+echo "Starting rknn3_cnn_demo..."
+echo "Model: ${MODEL}"
+echo "Loop time: ${TIME_LOOP} hours"
+echo "Loop count: ${COUNT_LOOP}"
+echo "Device ID: ${DEVICE_ID}"
+echo "Core mask: ${CORE_MASK}"
 
 current_log="${log_pre}_${model_dirname}_${start_time}_device${DEVICE_ID}_${CORE_MASK}.log"
 log_files+=("$current_log")
 
-# 构建完整命令
-cmd="rknn3_cnn_demo -m \"$RKNN_MODEL\" -w \"$WEIGHT_MODEL\" -c \"$CORE_MASK\" -i \"$IMG_PATH\" -tl \"${time_loop}\" -id \"${DEVICE_ID}\" -cl \"${cnt_loop}\""
+# Build complete command
+cmd="rknn3_cnn_demo -m \"$RKNN_MODEL\" -w \"$WEIGHT_MODEL\" -c \"$CORE_MASK\" -i \"$IMG_PATH\" -tl \"${TIME_LOOP}\" -id \"${DEVICE_ID}\" -cl \"${COUNT_LOOP}\""
 
-# 输出执行的命令
-echo ">>> 执行命令: $cmd > $current_log"
+# Output executed command
+echo ">>> Executing command: $cmd > $current_log"
 
 rknn3_cnn_demo \
     -m "$RKNN_MODEL" \
     -w "$WEIGHT_MODEL" \
     -c "$CORE_MASK" \
     -i "$IMG_PATH" \
-    -tl "${time_loop}" \
+    -tl "${TIME_LOOP}" \
     -id "${DEVICE_ID}" \
-    -cl "${cnt_loop}" >"$current_log" 2>&1 &
+    -cl "${COUNT_LOOP}" >"$current_log" 2>&1 &
 pids+=($!)
-echo "等待所有进程完成..."
+echo "Waiting for all processes to complete..."
 for pid in "${pids[@]}"; do wait "$pid"; done
-echo "所有进程已完成。"
+echo "All processes completed."
 
-echo "==================== 压测结果汇总 ===================="
+echo "==================== Stress Test Results Summary ===================="
 
 model_name=$(basename "$1")
 error_found=0
@@ -107,23 +110,23 @@ run_cnt=0
 device_id_mac=""
 
 echo ""
-echo "--- 设备 ${DEVICE_ID} 统计 ---"
+echo "--- Device ${DEVICE_ID} Statistics ---"
 
 for log in "${log_files[@]}"; do
-    # 检查日志文件是否存在
+    # Check if log file exists
     if [ ! -f "$log" ]; then
-        echo "  日志文件不存在"
+        echo "  Log file does not exist"
         error_found=1
         continue
     fi
 
-    # 获取设备ID MAC
+    # Get device ID MAC
     device_id_line=$(grep 'device_id' "$log" 2>/dev/null | tail -n 1)
     device_id_mac=$(echo "$device_id_line" | awk -F': ' '{print $2}')
 
-    # 检查是否成功完成
+    # Check if completed successfully
     if ! grep -q "rknn3_model_stress_test_done" "$log"; then
-        echo "  ❌ 异常"
+        echo "  [ERROR] Abnormal"
         tail -n 20 "$log"
         error_found=1
         continue
@@ -131,7 +134,7 @@ for log in "${log_files[@]}"; do
 
     fps_line=$(grep 'avgFPS' "$log" 2>/dev/null | tail -n 1)
     if [[ -z "$fps_line" ]]; then
-        echo "  无 FPS 信息"
+        echo "  No FPS information"
         error_found=1
         continue
     fi
@@ -141,7 +144,7 @@ for log in "${log_files[@]}"; do
     tot_time=$(echo "$fps_line" | awk -F'tot_time:' '{print $2}' | awk -F',' '{print $1}')
     avg_cost=$(echo "$fps_line" | awk -F'avgCost:' '{print $NF}' | awk '{print $1}')
 
-    # 提取输入分辨率信息（模型输入）
+    # Extract input resolution information (model input)
     input_res_line=$(grep 'input image height' "$log" 2>/dev/null | tail -n 1)
     if [[ -n "$input_res_line" ]]; then
         input_height=$(echo "$input_res_line" | awk -F'height=' '{print $2}' | awk -F',' '{print $1}')
@@ -154,50 +157,43 @@ for log in "${log_files[@]}"; do
     fi
 
     if [[ -n "$fps" ]]; then
-        echo "  核心掩码 $CORE_MASK: FPS = $fps, loop_cnt = $run_cnt, avgCost = $avg_cost ms"
+        echo "  Core mask $CORE_MASK: FPS = $fps, loop_cnt = $run_cnt, avgCost = $avg_cost ms"
         total_fps=$(awk "BEGIN {printf \"%.2f\", $total_fps + $fps}")
         total_frames=$(awk "BEGIN {printf \"%.2f\", $total_frames + $fps * $tot_time / 1000}")
     else
-        echo "  提取FPS失败"
+        echo "  Failed to extract FPS"
         error_found=1
     fi
 done
 
-# 打印设备小结
-echo "  [$model_name] 设备ID: $device_id_mac"
-echo "  [$model_name] 核心掩码: $CORE_MASK"
-echo "  [$model_name] 总帧数: $total_frames"
-echo "  [$model_name] 总耗时: $tot_time ms"
-echo "  [$model_name] 平均耗时: $avg_cost ms"
-echo "  [$model_name] 总帧率: $total_fps"
+# Print device summary
+echo "  [$model_name] Device ID: $device_id_mac"
+echo "  [$model_name] Core mask: $CORE_MASK"
+echo "  [$model_name] Total frames: $total_frames"
+echo "  [$model_name] Total time: $tot_time ms"
+echo "  [$model_name] Average cost: $avg_cost ms"
+echo "  [$model_name] Total FPS: $total_fps"
 
 if [ $error_found -eq 0 ]; then
-    echo "  状态: ✅ 通过"
+    echo "  Status: [PASS]"
 else
-    echo "  状态: ❌ 失败"
+    echo "  Status: [FAIL]"
 fi
 
 echo ""
-echo "==================== 总体统计 ===================="
-echo "总帧率: $total_fps"
-echo "总帧数: $total_frames"
+echo "==================== Overall Statistics ===================="
+echo "Total FPS: $total_fps"
+echo "Total frames: $total_frames"
 echo "=================================================="
 
-# 处理日志保存
-# 1. 保存到 /data 目录（完整日志）
-dest="/data/rknn3_model_stress_test_log"
-mkdir -p "$dest"
-cp "$current_log" "$dest/" 2>/dev/null || true
-echo "日志拷贝到：$dest/$(basename $current_log)"
-
-# 2. 保存到脚本运行目录的 test_results/performance/cnn.log（追加模式，带锁）
+# Save results to test_results/performance in script run directory
 SCRIPT_RUN_DIR="$(pwd)"
 RESULT_DIR="${SCRIPT_RUN_DIR}/test_results/performance"
 mkdir -p "$RESULT_DIR"
 RESULT_FILE="${RESULT_DIR}/cnn.log"
 LOCK_FILE="${RESULT_FILE}.lock"
 
-# 准备要追加的内容
+# Prepare content to append
 APPEND_CONTENT=$(cat <<EOF
 cnn:
 model: ${model_name}
@@ -212,30 +208,40 @@ avg_cost: ${avg_cost} ms
 EOF
 )
 
-# 使用 flock 加锁，避免并发写入冲突
+# Use flock for locking to avoid concurrent write conflicts
 (
-    flock -x 200  # 获取独占锁
-    # 如果文件存在且非空，先追加空行
+    flock -x 200  # Acquire exclusive lock
+    # If file exists and is not empty, append blank line first
     if [ -s "$RESULT_FILE" ]; then
         echo "" >> "$RESULT_FILE"
     fi
-    # 追加新内容
+    # Append new content
     echo "$APPEND_CONTENT" >> "$RESULT_FILE"
 ) 200>"$LOCK_FILE"
 
-echo "测试结果追加到：${RESULT_FILE}"
-
-# 只删除自己的临时日志文件，不删除整个目录（可能被其他进程使用）
-rm -f "$current_log"
+echo "Test results appended to: ${RESULT_FILE}"
 
 if [ $error_found -eq 0 ]; then
+    # Delete temporary log file on success
+    if [ "$CLEANUP_TEMP_LOG" = "true" ]; then
+        rm -f "$current_log"
+    fi
     echo ""
-    echo "✅ [SUCCESS] 设备压测通过。"
+    echo "[SUCCESS] Device stress test passed."
     echo "[rknn3_model_stress_test_done]"
     exit 0
 else
+    # Copy log to /data directory on error
+    dest="/data/rknn3_model_stress_test_log"
+    mkdir -p "$dest"
+    cp "$current_log" "$dest/" 2>/dev/null || true
+    # Delete temporary log file after copying
+    if [ "$CLEANUP_TEMP_LOG" = "true" ]; then
+        rm -f "$current_log"
+    fi
     echo ""
-    echo "❌ [ERROR] 设备压测存在异常，请检查上述日志。"
+    echo "[ERROR] Device stress test has abnormalities, please check the above log."
+    echo "Log copied to: $dest/$(basename $current_log)"
     echo "[rknn3_model_stress_test_error]"
     exit 1
 fi

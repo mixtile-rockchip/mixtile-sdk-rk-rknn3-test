@@ -5,29 +5,31 @@ echo performance | tee $(find /sys/ -name *governor)
 MAX_CONTEXT=1024
 CORE_MASK=0xff
 
+# Control whether to delete temporary log files (default: true)
+CLEANUP_TEMP_LOG="${CLEANUP_TEMP_LOG:-true}"
+
 if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "==========================================="
-    echo "RKNN3 LLM Demo 压测工具"
+    echo "RKNN3 LLM Demo Stress Test Tool"
     echo "==========================================="
-    echo "用法:"
+    echo "Usage:"
     echo "  $0 <model_dir> <seq_len> <new_tokens> <loop_time> <loop_count> <device_id> [core_mask(optional)]"
     echo ""
-    echo "参数说明:"
-    echo "  model_dir       指定模型文件的基础路径,要指定到.rknn之前的路径例如:/userdata/Qwen2.5-0.5B/Qwen2.5-0.5B"
-    echo "  seq_len         指定prompt长度"
-    echo "  new_tokens      指定输出长度，如果为1则表示prefill模式"
-    echo "  loop_time       压测持续时间 (小时),如果为0，则循环次数"
-    echo "  loop_count      推理循环次数，时间循环优先"
-    echo "  device_id       指定设备ID (通常为0)"
-    echo "  core_mask       核心掩码(可选,16进制),如'0xff'表示全8核,'0x0f'表示核心0-3"
+    echo "Parameters:"
+    echo "  model_dir       Model file base path (before .rknn extension), e.g., /userdata/Qwen2.5-0.5B/Qwen2.5-0.5B"
+    echo "  seq_len         Prompt length"
+    echo "  new_tokens      Output length, if 1 indicates prefill mode"
+    echo "  loop_time       Stress test duration (hours), if 0, use loop count"
+    echo "  loop_count      Inference loop count, time loop takes priority"
+    echo "  device_id       Device ID (typically 0)"
+    echo "  core_mask       Core mask (optional, hex), e.g., '0xff' for all 8 cores, '0x0f' for cores 0-3"
     echo ""
-    echo "核心掩码示例:"
-    echo "  0xff   - 全8核 (二进制: 11111111)"
-    echo "  0x0f   - 核心0-3 (二进制: 00001111)"
-    echo "  0xf0   - 核心4-7 (二进制: 11110000)"
-    echo "  0x03   - 核心0-1 (二进制: 00000011)"
+    echo "Core mask examples:"
+    echo "  0xff   - All 8 cores (binary: 11111111)"
+    echo "  0x0f   - Cores 0-3 (binary: 00001111)"
+    echo "  0xf0   - Cores 4-7 (binary: 11110000)"
+    echo "  0x03   - Cores 0-1 (binary: 00000011)"
     echo ""
-    echo "当前支持的模型系列:Qwen2.5/Qwen3"
     echo ""
     echo "==========================================="
     exit 1
@@ -43,7 +45,7 @@ GEN_LEN=$3
 TIME_LOOP=$4
 LOOP_CNT=$5
 DEVICE_ID=$6
-CORE_MASK="${7:-0xff}"  # 默认全8核
+CORE_MASK="${7:-0xff}"  # Default: all 8 cores
 
 model_name=$(basename "$MODEL_DIR")
 
@@ -51,23 +53,23 @@ RKNN_MODEL=${MODEL_DIR}.rknn
 WEIGHT_MODEL=${MODEL_DIR}.weight
 for f in "$RKNN_MODEL" "$WEIGHT_MODEL"; do
     if [ ! -f "$f" ]; then
-        echo "❌ miss file: $f"
+        echo "[ERROR] Missing file: $f"
         exit 1
     fi
 done
 
-echo "✅ 启动 rknn3_llm_demo..."
-echo "模型目录: $MODEL_DIR"
-echo "Loop 时间: ${TIME_LOOP} 小时"
-echo "循环次数: ${LOOP_CNT}"
-echo "指定设备ID: ${DEVICE_ID}"
-echo "核心掩码: $CORE_MASK"
+echo "Starting rknn3_llm_demo..."
+echo "Model directory: $MODEL_DIR"
+echo "Loop time: ${TIME_LOOP} hours"
+echo "Loop count: ${LOOP_CNT}"
+echo "Device ID: ${DEVICE_ID}"
+echo "Core mask: $CORE_MASK"
 
 pids=()
 start_time=$(date +%Y%m%d_%H%M%S)
 model_dirname=$(basename "$MODEL_DIR")
 LOG_DIR="/tmp"
-echo "日志目录: ${LOG_DIR}"
+echo "Log directory: ${LOG_DIR}"
 mkdir -p "$LOG_DIR"
 log_pre="${LOG_DIR}/rknn3_$$"
 
@@ -88,13 +90,13 @@ rknn3_llm_demo \
     -id "${DEVICE_ID}" >"$current_log" 2>&1 &
     pids+=($!)
 
-echo "等待所有进程完成..."
+echo "Waiting for all processes to complete..."
 for pid in "${pids[@]}"; do wait "$pid"; done
-echo "所有进程已完成。"
+echo "All processes completed."
 
-echo "==================== 压测结果汇总 ===================="
+echo "==================== Stress Test Results Summary ===================="
 
-# 检查执行状态并打印指定关键词后的日志
+# Check execution status and print logs after specified keyword
 error_found=0
 ttft=""
 tpot=""
@@ -106,8 +108,8 @@ total_runs=""
 for log in "${log_files[@]}"; do
     echo "$log"
     if grep -q "rknn3_model_stress_test_done" "$log"; then
-        # echo "--- 日志文件: $(basename "$log") (成功) ---"
-        # 使用 sed 打印匹配行之后的所有内容
+        # echo "--- Log file: $(basename "$log") (Success) ---"
+        # Use sed to print all content after matching line
         sed -n '/rknn3_model_stress_test_done/,$p' "$log"
 
 
@@ -115,31 +117,24 @@ for log in "${log_files[@]}"; do
         tpot=$(grep 'TPOT:' "$log" 2>/dev/null | tail -n 1 | awk -F'=' '{print $NF}' | sed 's/^[[:space:]]*//')
         prefill_tps=$(grep 'Prefill:' "$log" 2>/dev/null | tail -n 1 | awk -F'=' '{print $NF}' | sed 's/^[[:space:]]*//')
         tps=$(grep 'TPS:' "$log" 2>/dev/null | tail -n 1 | awk -F'=' '{print $NF}' | sed 's/^[[:space:]]*//')
-        total_time=$(grep '总耗时：' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=3;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
-        total_runs=$(grep '总推理次数:' "$log" 2>/dev/null | tail -n 1 | awk '{print $NF}')
+        total_time=$(grep 'Total time:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=3;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+        total_runs=$(grep 'Total runs:' "$log" 2>/dev/null | tail -n 1 | awk '{print $NF}')
     else
-        echo "--- 日志文件: $(basename "$log") (❌ 异常) ---"
-        tail -n 20 "$log" # 如果没找到成功标志，打印最后20行报错
+        echo "--- Log file: $(basename "$log") ([ERROR] Abnormal) ---"
+        tail -n 20 "$log" # If success marker not found, print last 20 lines of error
         error_found=1
     fi
     echo ""
 done
 
-# 处理日志保存
-# 1. 保存到 /data 目录（完整日志）
-dest="/data/rknn3_model_stress_test_log"
-mkdir -p "$dest"
-cp "$current_log" "$dest/" 2>/dev/null || true
-echo "日志拷贝到：$dest/$(basename $current_log)"
-
-# 2. 保存到脚本运行目录的 test_results/performance/llm.log（追加模式，带锁）
+# Save results to test_results/performance in script run directory (key information)
 SCRIPT_RUN_DIR="$(pwd)"
 RESULT_DIR="${SCRIPT_RUN_DIR}/test_results/performance"
 mkdir -p "$RESULT_DIR"
 RESULT_FILE="${RESULT_DIR}/llm.log"
 LOCK_FILE="${RESULT_FILE}.lock"
 
-# 准备要追加的内容
+# Prepare content to append
 APPEND_CONTENT=$(cat <<EOF
 llm:
 model: ${model_name}
@@ -155,33 +150,38 @@ TotalRuns: ${total_runs}
 EOF
 )
 
-# 使用 flock 加锁，避免并发写入冲突
+# Use flock for locking to avoid concurrent write conflicts
 (
-    flock -x 200  # 获取独占锁
-    # 如果文件存在且非空，先追加空行
+    flock -x 200  # Acquire exclusive lock
+    # If file exists and is not empty, append blank line first
     if [ -s "$RESULT_FILE" ]; then
         echo "" >> "$RESULT_FILE"
     fi
-    # 追加新内容
+    # Append new content
     echo "$APPEND_CONTENT" >> "$RESULT_FILE"
 ) 200>"$LOCK_FILE"
 
-echo "测试结果追加到：${RESULT_FILE}"
-
-# 只删除自己的临时日志文件，不删除整个目录（可能被其他进程使用）
-rm -f "$current_log"
+echo "Test results appended to: ${RESULT_FILE}"
 
 if [ $error_found -eq 0 ]; then
-    # rm -rf ${LOG_DIR}
-    echo "✅ [SUCCESS] 所有设备压测通过。"
+    # Delete temporary log file on success
+    if [ "$CLEANUP_TEMP_LOG" = "true" ]; then
+        rm -f "$current_log"
+    fi
+    echo "[SUCCESS] All device stress tests passed."
     echo "[rknn3_model_stress_test_done]"
     exit 0
 else
-    dest="/data/rknn3_model_stress_test_log/rknn3_${model_dirname}_${start_time}"
-    # mkdir -p "$dest"
-    # cp "${LOG_DIR}"/* "$dest/" 2>/dev/null || true
-    echo "❌ [ERROR] 部分设备压测存在异常，请检查上述日志。"
-    # echo "日志拷贝到：$dest"
+    # Copy log to /data directory on error
+    dest="/data/rknn3_model_stress_test_log"
+    mkdir -p "$dest"
+    cp "$current_log" "$dest/" 2>/dev/null || true
+    # Delete temporary log file after copying
+    if [ "$CLEANUP_TEMP_LOG" = "true" ]; then
+        rm -f "$current_log"
+    fi
+    echo "[ERROR] Some device stress tests have abnormalities, please check the above log."
+    echo "Log copied to: $dest/$(basename $current_log)"
     echo "[rknn3_model_stress_test_error]"
     exit 1
 fi
