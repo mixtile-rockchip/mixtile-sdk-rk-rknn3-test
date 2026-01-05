@@ -229,6 +229,424 @@ get_model_path() {
 }
 
 # ============================================================================
+# RKNN-SMI Test Function
+# ============================================================================
+
+rknn_smi_test() {
+    # Color definitions for output
+    local RED='\033[0;31m'
+    local GREEN='\033[0;32m'
+    local YELLOW='\033[1;33m'
+    local BLUE='\033[0;34m'
+    local NC='\033[0m' # No Color
+
+    # Logging functions
+    log_info() {
+        echo -e "${BLUE}[INFO]${NC} $1"
+    }
+
+    log_success() {
+        echo -e "${GREEN}[SUCCESS]${NC} $1"
+    }
+
+    log_warning() {
+        echo -e "${YELLOW}[WARNING]${NC} $1"
+    }
+
+    log_error() {
+        echo -e "${RED}[ERROR]${NC} $1"
+    }
+
+    # Check if rknn-smi command exists
+    check_rknn_smi() {
+        if ! command -v rknn-smi &> /dev/null; then
+            log_error "rknn-smi command not found, please ensure RKNN driver is properly installed"
+            return 1
+        fi
+        return 0
+    }
+
+    # Get device list
+    get_device_list() {
+        rknn-smi info -l 2>/dev/null | grep "Device ID" | awk '{print $NF}' | sort -n
+    }
+
+    # Get chip list for specific device
+    get_chip_list() {
+        local device_id=$1
+        rknn-smi info -t cpu_freq -d $device_id 2>/dev/null | grep "Chip ID" | awk '{print $NF}' | sort -n
+    }
+
+    # Get available CPU frequencies
+    get_available_cpu_freq() {
+        local device_id=$1
+        local chip_id=$2
+        rknn-smi info -t cpu_freq -d $device_id -c $chip_id 2>/dev/null | grep "Available CPU Freq" | awk -F':' '{print $2}' | xargs
+    }
+
+    # Get available NPU frequencies
+    get_available_npu_freq() {
+        local device_id=$1
+        local chip_id=$2
+        rknn-smi info -t npu_freq -d $device_id -c $chip_id 2>/dev/null | grep "Available NPU Freq" | awk -F':' '{print $2}' | xargs
+    }
+
+    # Basic information query
+    query_basic_info() {
+        log_info "=== Basic RKNN Device Information Query ==="
+
+        log_info "1. Query version information:"
+        rknn-smi -v
+        echo
+
+        log_info "2. Query device information:"
+        rknn-smi info
+        echo
+
+        log_info "3. Query topology information:"
+        rknn-smi info -l
+        echo
+
+        log_info "4. Query all devices and chips detailed information:"
+        rknn-smi info -t board
+        echo
+    }
+
+    # Detailed status query
+    query_detailed_status() {
+        log_info "=== Detailed RKNN Device Status Query ==="
+
+        local info_types=("memory" "fan" "temp" "voltage" "health" "sys_time" "reset_reason" "pcie_err")
+        local type_names=("Memory Information" "Fan Speed Ratio" "Temperature Information" "Voltage Information" "Health Status" "System Time" "Last Reset Time" "PCIe Error Count")
+
+        for i in "${!info_types[@]}"; do
+            log_info "$((i+5)). Query all devices ${type_names[i]}:"
+            rknn-smi info -t ${info_types[i]}
+            echo
+            sleep 1
+        done
+    }
+
+    # Query frequency and work mode information
+    query_frequency_mode_info() {
+        log_info "=== Frequency and Work Mode Information Query ==="
+
+        local devices=$(get_device_list)
+
+        if [ -z "$devices" ]; then
+            log_warning "No RKNN devices found"
+            return 1
+        fi
+
+        for device in $devices; do
+            log_info "Querying device $device:"
+
+            log_info "  CPU frequency information:"
+            rknn-smi info -t cpu_freq -d $device
+            echo
+
+            log_info "  NPU frequency information:"
+            rknn-smi info -t npu_freq -d $device
+            echo
+
+            log_info "  Work mode information:"
+            rknn-smi info -t work_mode -d $device
+            echo
+
+            sleep 1
+        done
+    }
+
+    # CPU frequency setting test
+    test_cpu_freq_settings() {
+        log_info "=== Starting CPU Frequency Setting Test ==="
+
+        local devices=$(get_device_list)
+
+        if [ -z "$devices" ]; then
+            log_warning "No RKNN devices found for CPU frequency test"
+            return 1
+        fi
+
+        for device in $devices; do
+            log_info "Processing device $device"
+            local chips=$(get_chip_list $device)
+
+            if [ -z "$chips" ]; then
+                log_warning "  No chips found for device $device"
+                continue
+            fi
+
+            for chip in $chips; do
+                log_info "  Processing chip $chip"
+                local freq_list=$(get_available_cpu_freq $device $chip)
+
+                if [ -z "$freq_list" ]; then
+                    log_warning "    No available CPU frequency information for device $device chip $chip, skipping"
+                    continue
+                fi
+
+                log_info "    Available CPU frequencies: $freq_list"
+
+                for freq in $freq_list; do
+                    log_info "    Setting device ${device} chip ${chip} CPU frequency to: ${freq}MHz"
+                    log_info "Execute the command： rknn-smi set -t cpu_freq -d $device -c $chip -s $freq "
+                    rknn-smi set -t cpu_freq -d $device -c $chip -s $freq 2>/dev/null
+                    log_success "    Setting successful"
+                    # Verify setting
+                    sleep 1
+                    local current_freq=$(rknn-smi info -t cpu_freq -d $device -c $chip 2>/dev/null | grep "Current CPU Freq" | awk '{print $5}')
+                    log_info "    Current CPU frequency: ${current_freq}MHz"
+                    echo
+                    sleep 1
+                done
+            done
+        done
+    }
+
+    # NPU frequency setting test
+    test_npu_freq_settings() {
+        log_info "=== Starting NPU Frequency Setting Test ==="
+
+        local devices=$(get_device_list)
+
+        if [ -z "$devices" ]; then
+            log_warning "No RKNN devices found for NPU frequency test"
+            return 1
+        fi
+
+        for device in $devices; do
+            log_info "Processing device $device"
+            local chips=$(get_chip_list $device)
+
+            if [ -z "$chips" ]; then
+                log_warning "  No chips found for device $device"
+                continue
+            fi
+
+            for chip in $chips; do
+                log_info "  Processing chip $chip"
+                local freq_list=$(get_available_npu_freq $device $chip)
+
+                if [ -z "$freq_list" ]; then
+                    log_warning "    No available NPU frequency information for device $device chip $chip, skipping"
+                    continue
+                fi
+
+                log_info "    Available NPU frequencies: $freq_list"
+
+                for freq in $freq_list; do
+                    log_info "    Setting device ${device} chip ${chip} NPU frequency to: ${freq}MHz"
+                    log_info "Execute the command： rknn-smi set -t npu_freq -d $device -c $chip -s $freq "
+                    rknn-smi set -t npu_freq -d $device -c $chip -s $freq 2>/dev/null
+                    # Verify setting
+                    sleep 1
+                    local current_freq=$(rknn-smi info -t npu_freq -d $device -c $chip 2>/dev/null | grep "Current NPU Freq" | awk '{print $5}')
+                    log_info "    Current NPU frequency: ${current_freq}MHz"
+                    echo
+                    sleep 1
+                done
+            done
+        done
+    }
+
+    # Work mode setting test
+    test_work_mode_settings() {
+        log_info "=== Starting Work Mode Setting Test ==="
+
+        local devices=$(get_device_list)
+
+        if [ -z "$devices" ]; then
+            log_warning "No RKNN devices found for work mode test"
+            return 1
+        fi
+
+        local modes=("0" "1" "2")
+        local mode_names=("EFFICIENT" "NORMAL" "PERFORMANCE")
+
+        for device in $devices; do
+            log_info "Processing device $device"
+            local chips=$(get_chip_list $device)
+
+            if [ -z "$chips" ]; then
+                log_warning "  No chips found for device $device"
+                continue
+            fi
+
+            for chip in $chips; do
+                log_info "  Processing chip $chip"
+
+                for i in "${!modes[@]}"; do
+                    log_info "    Setting device ${device} chip ${chip} work mode to: ${mode_names[i]} (${modes[i]})"
+                    log_info "Execute the command： rknn-smi set -t work_mode -d $device -c $chip -s ${modes[i]} "
+                    rknn-smi set -t work_mode -d $device -c $chip -s ${modes[i]} 2>/dev/null
+                    # Verify setting
+                    sleep 1
+                    local current_mode=$(rknn-smi info -t work_mode -d $device -c $chip 2>/dev/null | grep "Chip Work Mode" | awk '{print $NF}')
+                    log_info "    Current work mode: $current_mode"
+                    echo
+                    sleep 1
+                done
+            done
+        done
+    }
+
+    # Final status summary
+    final_status_summary() {
+        log_info "=== Final Status Summary ==="
+
+        log_info "Device list:"
+        rknn-smi info -l
+        echo
+
+        local devices=$(get_device_list)
+
+        log_info "Current frequency status:"
+        for device in $devices; do
+            log_info "Device $device CPU frequency:"
+            rknn-smi info -t cpu_freq -d $device | grep -E "(Current|Available)" || true
+            log_info " Device $device NPU frequency:"
+            rknn-smi info -t npu_freq -d $device | grep -E "(Current|Available)" || true
+            log_info " Device $device work mode:"
+            rknn-smi info -t work_mode -d $device | grep "Chip Work Mode" || true
+            echo
+        done
+    }
+
+    # Main execution function
+    main_execution() {
+        log_info "RKNN-SMI Comprehensive Test Started"
+        echo
+
+        # Check if rknn-smi command exists
+        if ! check_rknn_smi; then
+            return 1
+        fi
+
+        # Basic information query
+        query_basic_info
+        sleep 1
+
+        # Detailed status query
+        query_detailed_status
+        sleep 1
+
+        # Frequency and work mode information query
+        query_frequency_mode_info
+        sleep 1
+
+
+        # CPU frequency setting test
+        test_cpu_freq_settings
+        sleep 1
+
+        # NPU frequency setting test
+        test_npu_freq_settings
+        sleep 1
+
+        # Work mode setting test
+        test_work_mode_settings
+
+        # Final status summary
+        final_status_summary
+
+        log_success "RKNN-SMI Comprehensive Test Completed Successfully"
+        return 0
+    }
+
+    # Execute main function
+    main_execution
+}
+
+# ============================================================================
+# RKNN-SMI Test Menu
+# ============================================================================
+
+rknn_smi_test_menu() {
+    while true; do
+        show_test_header
+        echo -e "${PURPLE}RKNN-SMI Test Menu${NC}"
+        echo "========================================"
+        echo "1. Run Comprehensive RKNN-SMI Test"
+        echo "2. Query Basic Information Only"
+        echo "3. Query Detailed Status Only"
+        echo "4. Return to Main Menu"
+        echo
+
+        read -rp "Please select an option (1-4): " choice
+
+        case $choice in
+            1)
+                echo -e "${YELLOW}Starting comprehensive RKNN-SMI test...${NC}"
+                rknn_smi_test
+                wait_return
+                ;;
+            2)
+                echo -e "${YELLOW}Querying basic RKNN-SMI information...${NC}"
+                # Extract and run only the query parts from rknn_smi_test
+                {
+                    # Color definitions
+                    local RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'
+
+                    # Check command exists
+                    if ! command -v rknn-smi &> /dev/null; then
+                        echo -e "${RED}rknn-smi command not found${NC}"
+                        return 1
+                    fi
+
+                    echo -e "${BLUE}=== Basic RKNN Device Information Query ===${NC}"
+                    echo "1. Query version information:"
+                    rknn-smi -v
+                    echo
+                    echo "2. Query device information:"
+                    rknn-smi info
+                    echo
+                    echo "3. Query topology information:"
+                    rknn-smi info -l
+                    echo
+                    echo "4. Query all devices and chips detailed information:"
+                    rknn-smi info -t board
+                    echo
+                }
+                wait_return
+                ;;
+            3)
+                echo -e "${YELLOW}Querying detailed RKNN-SMI status...${NC}"
+                # Extract and run only the detailed query parts from rknn_smi_test
+                {
+                    # Color definitions
+                    local RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'
+
+                    # Check command exists
+                    if ! command -v rknn-smi &> /dev/null; then
+                        echo -e "${RED}rknn-smi command not found${NC}"
+                        return 1
+                    fi
+
+                    echo -e "${BLUE}=== Detailed RKNN Device Status Query ===${NC}"
+                    local info_types=("memory" "fan" "temp" "voltage" "health" "sys_time" "reset_reason" "pcie_err")
+                    local type_names=("Memory Information" "Fan Speed Ratio" "Temperature Information" "Voltage Information" "Health Status" "System Time" "Last Reset Time" "PCIe Error Count")
+
+                    for i in "${!info_types[@]}"; do
+                        echo "$((i+1)). Query all devices ${type_names[i]}:"
+                        rknn-smi info -t ${info_types[i]}
+                        echo
+                    done
+                }
+                wait_return
+                ;;
+            4)
+                return
+                ;;
+            *)
+                echo -e "${RED}Invalid selection, please enter 1-4${NC}"
+                wait_return
+                ;;
+        esac
+    done
+}
+
+# ============================================================================
 # Background Task Management Functions
 # ============================================================================
 
@@ -1202,16 +1620,18 @@ main_menu() {
         echo "1. RKNN Test"
         echo "2. Background Tasks Management"
         echo "3. View Test Logs"
-        echo "4. Exit"
+        echo "4. RKNN-SMI Test"
+        echo "5. Exit"
         echo
 
-        read -rp "Please select an operation (1-4): " choice
+        read -rp "Please select an operation (1-5): " choice
 
         case $choice in
             1) rknn_test_menu ;;
             2) background_tasks_management_menu ;;
             3) view_test_logs ;;
-            4)
+            4) rknn_smi_test_menu ;;
+            5)
                 # Check if there are running background tasks
                 # 确保目录存在
                 mkdir -p "$BACKGROUND_TASKS_DIR"
