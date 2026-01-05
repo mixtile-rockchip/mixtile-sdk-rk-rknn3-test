@@ -559,6 +559,172 @@ rknn_smi_test() {
 }
 
 # ============================================================================
+# Reboot Test Function
+# ============================================================================
+
+reboot_test() {
+    # Color definitions for output
+    local RED='\033[0;31m'
+    local GREEN='\033[0;32m'
+    local YELLOW='\033[1;33m'
+    local BLUE='\033[0;34m'
+    local NC='\033[0m' # No Color
+
+    # Logging functions
+    log_info() {
+        echo -e "${BLUE}[INFO]${NC} $1"
+    }
+
+    log_success() {
+        echo -e "${GREEN}[SUCCESS]${NC} $1"
+    }
+
+    log_warning() {
+        echo -e "${YELLOW}[WARNING]${NC} $1"
+    }
+
+    log_error() {
+        echo -e "${RED}[ERROR]${NC} $1"
+    }
+
+    # Check if required commands exist
+    check_commands() {
+        if ! command -v rknn-smi &> /dev/null; then
+            log_error "rknn-smi command not found"
+            return 1
+        fi
+
+        if ! command -v rknn3_startup &> /dev/null; then
+            log_error "rknn3_startup command not found"
+            return 1
+        fi
+
+        return 0
+    }
+
+    # Verify reboot success by checking rknn-smi version output
+    verify_reboot_success() {
+        log_info "Verifying reboot success..."
+        local version_output
+        version_output=$(rknn-smi --version 2>/dev/null)
+
+        if echo "$version_output" | grep -q "rknn-smi version"; then
+            log_success "Reboot successful - rknn-smi version information found"
+            return 0
+        else
+            log_error "Reboot failed - rknn-smi version information not found"
+            return 1
+        fi
+    }
+
+    # Main reboot test function
+    main_reboot_test() {
+        # 创建日志文件路径
+        local reboot_log_file="$TEST_RESULTS_DIR/reboot.log"
+
+        # 清空日志文件
+        > "$reboot_log_file"
+
+        log_info "=== Starting Reboot Test ==="
+        log_info "All reboot test output will be保存到: $reboot_log_file"
+
+        # Check if required commands exist
+        if ! check_commands; then
+            return 1
+        fi
+
+        # Get number of loops
+        echo
+        validate_number_input "Enter number of reboot loops (1-100): " "LOOP" 1 100
+        local loop_count=$LOOP
+
+        log_info "Reboot test will run $loop_count times"
+        echo
+
+        # Confirm test execution
+        echo -e "${YELLOW}WARNING: This will reboot the RKNN device $loop_count times.${NC}"
+        echo -e "${YELLOW}Continue?${NC}"
+        echo "1. Yes, start reboot test"
+        echo "2. No, return to menu"
+
+        read -rp "Please select (1-2): " confirm_choice
+
+        if [[ "$confirm_choice" != "1" ]]; then
+            log_info "Reboot test cancelled"
+            return
+        fi
+
+        # 使用 tee 命令将后续所有输出同时显示在屏幕并保存到日志文件
+        {
+            local successful_reboots=0
+            local failed_reboots=0
+
+            log_info "Starting reboot test sequence..."
+            echo
+
+            for ((i=1; i<=loop_count; i++)); do
+                log_info "=== Reboot Test Iteration $i of $loop_count ==="
+
+                # Step 1: Hardware reset
+                log_info "1. Executing hardware reset: rknn-smi reset -t hw"
+                rknn-smi reset -t hw 2>/dev/null
+                # Step 2: Sleep for 1 second
+                log_info "2. Waiting for 1 second..."
+                sleep 2
+                # Step 3: Restart rknn3 startup
+                log_info "3. Restarting rknn3 startup: rknn3_startup restart"
+                rknn3_startup restart 2>/dev/null
+                # Additional wait for system to stabilize
+                log_info "Waiting 3 seconds for system to stabilize..."
+                sleep 2
+
+                # Step 4: Verify reboot success
+                if verify_reboot_success; then
+                    log_success "Reboot iteration $i completed successfully"
+                    ((successful_reboots++))
+                else
+                    log_error "Reboot iteration $i failed"
+                    ((failed_reboots++))
+                fi
+
+                # Add separator between iterations
+                if [[ $i -lt $loop_count ]]; then
+                    echo
+                    log_info "Preparing for next iteration..."
+                    sleep 2
+                    echo
+                fi
+            done
+
+            # Display test summary
+            echo
+            log_info "=== Reboot Test Summary ==="
+            log_info "Total iterations: $loop_count"
+            log_success "Successful reboots: $successful_reboots"
+
+            if [[ $failed_reboots -gt 0 ]]; then
+                log_error "Failed reboots: $failed_reboots"
+            else
+                log_success "All reboot tests completed successfully!"
+            fi
+
+            # Final verification
+            echo
+            log_info "Final system status verification:"
+            rknn-smi --version
+
+            return $((failed_reboots > 0 ? 1 : 0))
+
+        } | tee -a "$reboot_log_file"  # 将所有输出追加到日志文件
+
+        log_info "Reboot test completed. Full output saved to: $reboot_log_file"
+    }
+
+    # Execute main function
+    main_reboot_test
+}
+
+# ============================================================================
 # RKNN-SMI Test Menu
 # ============================================================================
 
@@ -570,7 +736,8 @@ rknn_smi_test_menu() {
         echo "1. Run Comprehensive RKNN-SMI Test"
         echo "2. Query Basic Information Only"
         echo "3. Query Detailed Status Only"
-        echo "4. Return to Main Menu"
+        echo "4. Reboot Test"
+        echo "5. Return to Main Menu"
         echo
 
         read -rp "Please select an option (1-4): " choice
@@ -636,6 +803,11 @@ rknn_smi_test_menu() {
                 wait_return
                 ;;
             4)
+                echo -e "${YELLOW}Starting Reboot Test...${NC}"
+                reboot_test
+                wait_return
+                ;;
+            5)
                 return
                 ;;
             *)
