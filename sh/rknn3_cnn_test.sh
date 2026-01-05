@@ -141,10 +141,22 @@ for log in "${log_files[@]}"; do
     tot_time=$(echo "$fps_line" | awk -F'tot_time:' '{print $2}' | awk -F',' '{print $1}')
     avg_cost=$(echo "$fps_line" | awk -F'avgCost:' '{print $NF}' | awk '{print $1}')
 
+    # 提取输入分辨率信息（模型输入）
+    input_res_line=$(grep 'input image height' "$log" 2>/dev/null | tail -n 1)
+    if [[ -n "$input_res_line" ]]; then
+        input_height=$(echo "$input_res_line" | awk -F'height=' '{print $2}' | awk -F',' '{print $1}')
+        input_width=$(echo "$input_res_line" | awk -F'width=' '{print $2}' | awk -F',' '{print $1}')
+        input_channel=$(echo "$input_res_line" | awk -F'channel=' '{print $2}' | awk '{print $1}')
+    else
+        input_height="unknown"
+        input_width="unknown"
+        input_channel="unknown"
+    fi
+
     if [[ -n "$fps" ]]; then
         echo "  核心掩码 $CORE_MASK: FPS = $fps, loop_cnt = $run_cnt, avgCost = $avg_cost ms"
         total_fps=$(awk "BEGIN {printf \"%.2f\", $total_fps + $fps}")
-        total_frames=$(awk "BEGIN {printf \"%.2f\", $total_frames + $fps * $run_cnt}")
+        total_frames=$(awk "BEGIN {printf \"%.2f\", $total_frames + $fps * $tot_time / 1000}")
     else
         echo "  提取FPS失败"
         error_found=1
@@ -172,10 +184,47 @@ echo "总帧数: $total_frames"
 echo "=================================================="
 
 # 处理日志保存
+# 1. 保存到 /data 目录（完整日志）
 dest="/data/rknn3_model_stress_test_log"
 mkdir -p "$dest"
 cp "$current_log" "$dest/" 2>/dev/null || true
 echo "日志拷贝到：$dest/$(basename $current_log)"
+
+# 2. 保存到脚本运行目录的 test_results/performance/cnn.log（追加模式，带锁）
+SCRIPT_RUN_DIR="$(pwd)"
+RESULT_DIR="${SCRIPT_RUN_DIR}/test_results/performance"
+mkdir -p "$RESULT_DIR"
+RESULT_FILE="${RESULT_DIR}/cnn.log"
+LOCK_FILE="${RESULT_FILE}.lock"
+
+# 准备要追加的内容
+APPEND_CONTENT=$(cat <<EOF
+cnn:
+model: ${model_name}
+core: ${CORE_MASK}
+input_width: ${input_width}
+input_height: ${input_height}
+input_channel: ${input_channel}
+total_frames: ${total_frames}
+total_time: ${tot_time} ms
+fps: ${total_fps}
+avg_cost: ${avg_cost} ms
+EOF
+)
+
+# 使用 flock 加锁，避免并发写入冲突
+(
+    flock -x 200  # 获取独占锁
+    # 如果文件存在且非空，先追加空行
+    if [ -s "$RESULT_FILE" ]; then
+        echo "" >> "$RESULT_FILE"
+    fi
+    # 追加新内容
+    echo "$APPEND_CONTENT" >> "$RESULT_FILE"
+) 200>"$LOCK_FILE"
+
+echo "测试结果追加到：${RESULT_FILE}"
+
 # 只删除自己的临时日志文件，不删除整个目录（可能被其他进程使用）
 rm -f "$current_log"
 

@@ -49,6 +49,8 @@ COUNT_LOOP="$3"
 DEVICE_ID="$4"
 CORE_MASK="${5:-0xff}"  # 默认全8核
 
+model_name=$(basename "$MODEL_DIR")
+
 # 将CORE_MASK赋值给Vision和LLM
 VISION_CORE_MASK="$CORE_MASK"
 LLM_CORE_MASK="$CORE_MASK"
@@ -116,12 +118,39 @@ echo "==================== 压测结果汇总 ===================="
 
 # 检查执行状态并打印指定关键词后的日志
 error_found=0
+vision=""
+gen_len=""
+ttft=""
+tps=""
+total_time=""
+total_runs=""
+input_width=""
+input_height=""
+
 for log in "${log_files[@]}"; do
     echo "$log"
     if grep -q "rknn3_model_stress_test_done" "$log"; then
         echo "--- 日志文件: $(basename "$log") (成功) ---"
-        # 使用 sed 打印匹配行之后的所有内容
         sed -n '/rknn3_model_stress_test_done/,$p' "$log"
+
+        vision=$(grep '| Vision' "$log" 2>/dev/null | tail -n 1 | awk -F'|' '{print $3}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        gen_len=$(grep '| GenLen' "$log" 2>/dev/null | tail -n 1 | awk -F'|' '{print $3}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        ttft=$(grep '| TTFT' "$log" 2>/dev/null | tail -n 1 | awk -F'|' '{print $3}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        tps=$(grep '| TPS' "$log" 2>/dev/null | tail -n 1 | awk -F'|' '{print $3}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        total_time=$(grep '总耗时：' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=3;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+        total_runs=$(grep '总推理次数:' "$log" 2>/dev/null | tail -n 1 | awk '{print $NF}')
+
+        # 提取 vision 模型输入分辨率信息
+        model_size_line=$(grep 'model_width=' "$log" 2>/dev/null | tail -n 1)
+        if [[ -n "$model_size_line" ]]; then
+            input_width=$(echo "$model_size_line" | awk -F'model_width=' '{print $2}' | awk '{print $1}')
+            input_height=$(echo "$model_size_line" | awk -F'model_height=' '{print $2}' | awk '{print $1}')
+            input_channel=3  # VLM vision 模型输入固定为 RGB888 格式（3通道）
+        else
+            input_width="unknown"
+            input_height="unknown"
+            input_channel="unknown"
+        fi
     else
         echo "--- 日志文件: $(basename "$log") (❌ 异常) ---"
         tail -n 20 "$log" # 如果没找到成功标志，打印最后20行报错
@@ -130,11 +159,49 @@ for log in "${log_files[@]}"; do
     echo ""
 done
 
-
+# 处理日志保存
+# 1. 保存到 /data 目录（完整日志）
 dest="/data/rknn3_model_stress_test_log"
 mkdir -p "$dest"
 cp "$current_log" "$dest/" 2>/dev/null || true
 echo "日志拷贝到：$dest/$(basename $current_log)"
+
+# 2. 保存到脚本运行目录的 test_results/performance/vlm.log（追加模式，带锁）
+SCRIPT_RUN_DIR="$(pwd)"
+RESULT_DIR="${SCRIPT_RUN_DIR}/test_results/performance"
+mkdir -p "$RESULT_DIR"
+RESULT_FILE="${RESULT_DIR}/vlm.log"
+LOCK_FILE="${RESULT_FILE}.lock"
+
+# 准备要追加的内容
+APPEND_CONTENT=$(cat <<EOF
+vlm:
+model: ${model_name}
+core: ${CORE_MASK}
+input_width: ${input_width}
+input_height: ${input_height}
+Vision: ${vision}
+GenLen: ${gen_len}
+TTFT: ${ttft}
+TPS: ${tps}
+TotalTime: ${total_time}
+TotalRuns: ${total_runs}
+EOF
+)
+
+# 使用 flock 加锁，避免并发写入冲突
+(
+    flock -x 200  # 获取独占锁
+    # 如果文件存在且非空，先追加空行
+    if [ -s "$RESULT_FILE" ]; then
+        echo "" >> "$RESULT_FILE"
+    fi
+    # 追加新内容
+    echo "$APPEND_CONTENT" >> "$RESULT_FILE"
+) 200>"$LOCK_FILE"
+
+echo "测试结果追加到：${RESULT_FILE}"
+
 # 只删除自己的临时日志文件，不删除整个目录（可能被其他进程使用）
 rm -f "$current_log"
 
