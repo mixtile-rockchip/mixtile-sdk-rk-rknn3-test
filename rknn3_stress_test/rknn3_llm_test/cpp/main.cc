@@ -514,6 +514,12 @@ int main(int argc, char **argv) {
             printf("[rknn3_model_stress_test_error] rknn3_session_run failed, ret=%d\n", ret);
             goto exit;
         }
+        ret = rknn3_session_clear_kvcache(session, RKNN3_KVCACHE_CLEAR_ALL);
+        if (ret != RKNN3_SUCCESS) {
+            printf("[rknn3_model_stress_test_error] rknn3_session_clear_kvcache failed, ret=%d\n", ret);
+            goto exit;
+        }
+
         decode_time_ms.tok();
         // 3. 结束计时
         cur_time.tok();
