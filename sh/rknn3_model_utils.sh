@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
 # ===========================================
 # RKNN3 Model File Utilities

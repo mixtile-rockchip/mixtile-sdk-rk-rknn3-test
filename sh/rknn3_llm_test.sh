@@ -1,10 +1,10 @@
-#!/bin/bash
+#!/bin/sh
 
 echo performance | tee $(find /sys/ -name *governor)
 
 # Source common utility functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/rknn3_model_utils.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/rknn3_model_utils.sh"
 
 MAX_CONTEXT=1024
 CORE_MASK=0xff
@@ -68,26 +68,16 @@ WEIGHT_MODEL=$(find "$model_dir" -maxdepth 1 -type f -name "*.weight" 2>/dev/nul
 TOKENIZER=$(find "$model_dir" -maxdepth 1 -type f -name "*.tokenizer.gguf" 2>/dev/null | head -n 1)
 EMBEDDING=$(find "$model_dir" -maxdepth 1 -type f -name "*.embed.bin" 2>/dev/null | head -n 1)
 
-# Check if all required files exist
-declare -A required_files=(
-    ["RKNN_MODEL"]="$RKNN_MODEL"
-    ["WEIGHT_MODEL"]="$WEIGHT_MODEL"
-    ["TOKENIZER"]="$TOKENIZER"
-    ["EMBEDDING"]="$EMBEDDING"
-)
+# Check if all required files exist using indexed arrays
+required_files_names=("RKNN_MODEL" "WEIGHT_MODEL" "TOKENIZER" "EMBEDDING")
+required_files_values=("$RKNN_MODEL" "$WEIGHT_MODEL" "$TOKENIZER" "$EMBEDDING")
+file_patterns=("*.rknn" "*.weight" "*.tokenizer.gguf" "*.embed.bin")
 
-# Define file patterns for error messages
-declare -A file_patterns=(
-    ["RKNN_MODEL"]="*.rknn"
-    ["WEIGHT_MODEL"]="*.weight"
-    ["TOKENIZER"]="*.tokenizer.gguf"
-    ["EMBEDDING"]="*.embed.bin"
-)
-
-for name in "${!required_files[@]}"; do
-    file="${required_files[$name]}"
+for i in 0 1 2 3; do
+    name="${required_files_names[i]}"
+    file="${required_files_values[i]}"
+    pattern="${file_patterns[i]}"
     if [ -z "$file" ] || [ ! -f "$file" ]; then
-        pattern="${file_patterns[$name]}"
         echo "[ERROR] Missing file for $name"
         echo "        Search directory: $model_dir"
         echo "        Search pattern: $pattern"
@@ -108,11 +98,19 @@ pids=()
 start_time=$(date +%Y%m%d_%H%M%S)
 model_dirname=$(basename "$MODEL_DIR")
 LOG_DIR="/tmp"
-echo "Log directory: ${LOG_DIR}"
+
 mkdir -p "$LOG_DIR"
+if [ -d "/tmp" ]; then
+    LOG_DIR="/tmp"
+else
+    LOG_DIR="/data/tmp"
+    mkdir -p "$LOG_DIR"
+fi
+echo "Log directory: ${LOG_DIR}"
 log_pre="${LOG_DIR}/rknn3_$$"
 
 current_log="${log_pre}_${model_dirname}_${start_time}_device${DEVICE_ID}_${CORE_MASK}.log"
+echo "Log file: ${current_log}"
 log_files+=("$current_log")
 
 # Build command arguments
@@ -214,16 +212,29 @@ EOF
 
 # Save results to file if enabled
 if [ "$SAVE_RESULT" == "1" ]; then
-    # Use flock for locking to avoid concurrent write conflicts
-    (
-        flock -x 200  # Acquire exclusive lock
-        # If file exists and is not empty, append blank line first
-        if [ -s "$RESULT_FILE" ]; then
-            echo "" >> "$RESULT_FILE"
+    # Use mkdir to implement lock mechanism (compatible with Android Toybox)
+    MAX_RETRIES=100
+    RETRY_COUNT=0
+    while ! mkdir "$LOCK_FILE" 2>/dev/null; do
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+            echo "Warning: Lock acquisition timeout, forcing write"
+            rm -rf "$LOCK_FILE" 2>/dev/null
+            mkdir "$LOCK_FILE" 2>/dev/null || true
+            break
         fi
-        # Append new content
-        echo "$APPEND_CONTENT" >> "$RESULT_FILE"
-    ) 200>"$LOCK_FILE"
+        sleep 0.1
+    done
+
+    # If file exists and is not empty, append a blank line first
+    if [ -s "$RESULT_FILE" ]; then
+        echo "" >> "$RESULT_FILE"
+    fi
+    # Append new content
+    echo "$APPEND_CONTENT" >> "$RESULT_FILE"
+
+    # Release lock
+    rm -rf "$LOCK_FILE"
 
     echo "Test results appended to: ${RESULT_FILE}"
 else

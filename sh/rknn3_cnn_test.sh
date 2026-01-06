@@ -1,16 +1,12 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
 echo performance | tee $(find /sys/ -name *governor)
 
-if [[ "${BASH_VERSION%%.*}" -ge 4 ]]; then
-    set -uo pipefail
-else
-    set -u  # Old bash versions only use -u
-fi
+set -u  # 旧版 bash 只使用 -u
 
 # Source common utility functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/rknn3_model_utils.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/rknn3_model_utils.sh"
 
 # Control whether to delete temporary log files (default: true)
 CLEANUP_TEMP_LOG="${CLEANUP_TEMP_LOG:-true}"
@@ -68,8 +64,15 @@ pids=()
 start_time=$(date +%Y%m%d_%H%M%S)
 
 LOG_DIR="/tmp"
-echo "Log directory: ${LOG_DIR}"
+
 mkdir -p "$LOG_DIR"
+if [ -d "/tmp" ]; then
+    LOG_DIR="/tmp"
+else
+    LOG_DIR="/data/tmp"
+    mkdir -p "$LOG_DIR"
+fi
+echo "Log directory: ${LOG_DIR}"
 log_pre="${LOG_DIR}/rknn3_$$"
 log_files=()
 
@@ -84,31 +87,19 @@ WEIGHT_MODEL=$(find "$model_dir" -maxdepth 1 -type f -name "*.weight" 2>/dev/nul
 
 IMG_PATH="test.jpg"
 
-# Check if all required files exist
-declare -A required_files=(
-    ["RKNN_MODEL"]="$RKNN_MODEL"
-    ["WEIGHT_MODEL"]="$WEIGHT_MODEL"
-    ["IMG_PATH"]="$IMG_PATH"
-)
+# Check if all required files exist using indexed arrays
+required_files_names=("RKNN_MODEL" "WEIGHT_MODEL" "IMG_PATH")
+required_files_values=("$RKNN_MODEL" "$WEIGHT_MODEL" "$IMG_PATH")
+file_patterns=("*.rknn" "*.weight" "test.jpg")
+search_locations=("$model_dir" "$model_dir" "current directory")
 
-# Define file patterns and search locations for error messages
-declare -A file_patterns=(
-    ["RKNN_MODEL"]="*.rknn"
-    ["WEIGHT_MODEL"]="*.weight"
-    ["IMG_PATH"]="test.jpg"
-)
+for i in 0 1 2; do
+    name="${required_files_names[i]}"
+    file="${required_files_values[i]}"
+    pattern="${file_patterns[i]}"
+    location="${search_locations[i]}"
 
-declare -A search_locations=(
-    ["RKNN_MODEL"]="$model_dir"
-    ["WEIGHT_MODEL"]="$model_dir"
-    ["IMG_PATH"]="current directory"
-)
-
-for name in "${!required_files[@]}"; do
-    file="${required_files[$name]}"
     if [ -z "$file" ] || [ ! -f "$file" ]; then
-        pattern="${file_patterns[$name]}"
-        location="${search_locations[$name]}"
         echo "[ERROR] Missing file for $name"
         echo "        Search location: $location"
         echo "        Search pattern: $pattern"
@@ -282,16 +273,29 @@ EOF
 
 # Save results to file if enabled
 if [ "$SAVE_RESULT" == "1" ]; then
-    # Use flock for locking to avoid concurrent write conflicts
-    (
-        flock -x 200  # Acquire exclusive lock
-        # If file exists and is not empty, append blank line first
-        if [ -s "$RESULT_FILE" ]; then
-            echo "" >> "$RESULT_FILE"
+    # Use mkdir to implement lock mechanism (compatible with Android Toybox)
+    MAX_RETRIES=100
+    RETRY_COUNT=0
+    while ! mkdir "$LOCK_FILE" 2>/dev/null; do
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+            echo "Warning: Lock acquisition timeout, forcing write"
+            rm -rf "$LOCK_FILE" 2>/dev/null
+            mkdir "$LOCK_FILE" 2>/dev/null || true
+            break
         fi
-        # Append new content
-        echo "$APPEND_CONTENT" >> "$RESULT_FILE"
-    ) 200>"$LOCK_FILE"
+        sleep 0.1
+    done
+
+    # If file exists and is not empty, append a blank line first
+    if [ -s "$RESULT_FILE" ]; then
+        echo "" >> "$RESULT_FILE"
+    fi
+    # Append new content
+    echo "$APPEND_CONTENT" >> "$RESULT_FILE"
+
+    # Release lock
+    rm -rf "$LOCK_FILE"
 
     echo "Test results appended to: ${RESULT_FILE}"
 else

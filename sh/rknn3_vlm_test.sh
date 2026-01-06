@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
 # ===========================================
 # RKNN3 VLM Demo Launch Script
@@ -12,8 +12,8 @@
 echo performance | tee $(find /sys/ -name *governor)
 
 # Source common utility functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/rknn3_model_utils.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "${SCRIPT_DIR}/rknn3_model_utils.sh"
 
 # Control whether to delete temporary log files (default: true)
 CLEANUP_TEMP_LOG="${CLEANUP_TEMP_LOG:-true}"
@@ -89,46 +89,22 @@ PROMPT_FILE=$(find "$search_dir" -maxdepth 1 -type f -name "*.ini" 2>/dev/null |
 
 IMAGE_PATH="test.jpg"
 
-# Check if all required files exist
-declare -A required_files=(
-    ["VISION_MODEL"]="$VISION_MODEL"
-    ["VISION_WEIGHT"]="$VISION_WEIGHT"
-    ["LLM_MODEL"]="$LLM_MODEL"
-    ["LLM_WEIGHT"]="$LLM_WEIGHT"
-    ["TOKENIZER"]="$TOKENIZER"
-    ["EMBEDDING"]="$EMBEDDING"
-    ["IMAGE_PATH"]="$IMAGE_PATH"
-    ["PROMPT_FILE"]="$PROMPT_FILE"
-)
+# Check if all required files exist using indexed arrays
+required_files_names=("VISION_MODEL" "VISION_WEIGHT" "LLM_MODEL" "LLM_WEIGHT" "TOKENIZER" "EMBEDDING" "IMAGE_PATH" "PROMPT_FILE")
+required_files_values=("$VISION_MODEL" "$VISION_WEIGHT" "$LLM_MODEL" "$LLM_WEIGHT" "$TOKENIZER" "$EMBEDDING" "$IMAGE_PATH" "$PROMPT_FILE")
 
 # Define file patterns and search locations for error messages
-declare -A file_patterns=(
-    ["VISION_MODEL"]="*vision*.rknn"
-    ["VISION_WEIGHT"]="*vision*.weight"
-    ["LLM_MODEL"]="*llm*.rknn"
-    ["LLM_WEIGHT"]="*llm*.weight"
-    ["TOKENIZER"]="*.tokenizer.gguf"
-    ["EMBEDDING"]="*.embed.bin"
-    ["IMAGE_PATH"]="test.jpg"
-    ["PROMPT_FILE"]="*.ini"
-)
+file_patterns=("*vision*.rknn" "*vision*.weight" "*llm*.rknn" "*llm*.weight" "*.tokenizer.gguf" "*.embed.bin" "test.jpg" "*.ini")
+search_locations=("$search_dir" "$search_dir" "$search_dir" "$search_dir" "$search_dir" "$search_dir" "current directory" "$search_dir")
 
-declare -A search_locations=(
-    ["VISION_MODEL"]="$search_dir"
-    ["VISION_WEIGHT"]="$search_dir"
-    ["LLM_MODEL"]="$search_dir"
-    ["LLM_WEIGHT"]="$search_dir"
-    ["TOKENIZER"]="$search_dir"
-    ["EMBEDDING"]="$search_dir"
-    ["IMAGE_PATH"]="current directory"
-    ["PROMPT_FILE"]="$search_dir"
-)
+# Check files
+for i in "${!required_files_names[@]}"; do
+    name="${required_files_names[i]}"
+    file="${required_files_values[i]}"
+    pattern="${file_patterns[i]}"
+    location="${search_locations[i]}"
 
-for name in "${!required_files[@]}"; do
-    file="${required_files[$name]}"
     if [ -z "$file" ] || [ ! -f "$file" ]; then
-        pattern="${file_patterns[$name]}"
-        location="${search_locations[$name]}"
         echo "[ERROR] Missing file for $name"
         echo "        Search location: $location"
         echo "        Search pattern: $pattern"
@@ -150,8 +126,15 @@ start_time=$(date +%Y%m%d_%H%M%S)
 
 model_dirname=$(basename "$MODEL_DIR")
 LOG_DIR="/tmp"
-echo "Log directory: ${LOG_DIR}"
+
 mkdir -p "$LOG_DIR"
+if [ -d "/tmp" ]; then
+    LOG_DIR="/tmp"
+else
+    LOG_DIR="/data/tmp"
+    mkdir -p "$LOG_DIR"
+fi
+echo "Log directory: ${LOG_DIR}"
 log_pre="${LOG_DIR}/rknn3_$$"
 
 current_log="${log_pre}_${model_dirname}_${start_time}_device${DEVICE_ID}_${CORE_MASK}.log"
@@ -272,16 +255,29 @@ EOF
 
 # Save results to file if enabled
 if [ "$SAVE_RESULT" == "1" ]; then
-    # Use flock for locking to avoid concurrent write conflicts
-    (
-        flock -x 200  # Acquire exclusive lock
-        # If file exists and is not empty, append blank line first
-        if [ -s "$RESULT_FILE" ]; then
-            echo "" >> "$RESULT_FILE"
+    # Use mkdir to implement lock mechanism (compatible with Android Toybox)
+    MAX_RETRIES=100
+    RETRY_COUNT=0
+    while ! mkdir "$LOCK_FILE" 2>/dev/null; do
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+            echo "Warning: Lock acquisition timeout, forcing write"
+            rm -rf "$LOCK_FILE" 2>/dev/null
+            mkdir "$LOCK_FILE" 2>/dev/null || true
+            break
         fi
-        # Append new content
-        echo "$APPEND_CONTENT" >> "$RESULT_FILE"
-    ) 200>"$LOCK_FILE"
+        sleep 0.1
+    done
+
+    # If file exists and is not empty, append a blank line first
+    if [ -s "$RESULT_FILE" ]; then
+        echo "" >> "$RESULT_FILE"
+    fi
+    # Append new content
+    echo "$APPEND_CONTENT" >> "$RESULT_FILE"
+
+    # Release lock
+    rm -rf "$LOCK_FILE"
 
     echo "Test results appended to: ${RESULT_FILE}"
 else

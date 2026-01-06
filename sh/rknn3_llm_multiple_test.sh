@@ -1,12 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
 echo performance | tee $(find /sys/ -name *governor) 2>/dev/null
 
-if [[ "${BASH_VERSION%%.*}" -ge 4 ]]; then
-    set -uo pipefail
-else
-    set -u  # Old bash versions only use -u
-fi
+set -u  # Old bash versions only use -u
 
 # Control whether to delete temporary log files (default: true)
 CLEANUP_TEMP_LOG="${CLEANUP_TEMP_LOG:-true}"
@@ -74,7 +70,7 @@ USE_YUV="${8:-0}"      # Default: RGB (reserved parameter)
 SAVE_RESULT="${9:-0}"  # Default: 0 (no save)
 
 # Get script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LLM_TEST_SCRIPT="${SCRIPT_DIR}/rknn3_llm_test.sh"
 
 # Check if rknn3_llm_test.sh exists

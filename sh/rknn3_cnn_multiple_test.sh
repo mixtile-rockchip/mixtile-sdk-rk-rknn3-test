@@ -1,12 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
 echo performance | tee $(find /sys/ -name *governor)
 
-if [[ "${BASH_VERSION%%.*}" -ge 4 ]]; then
-    set -uo pipefail
-else
-    set -u  # Old bash versions only use -u
-fi
+set -u  # Old bash versions only use -u
 
 # Control whether to delete temporary log files (default: true)
 CLEANUP_TEMP_LOG="${CLEANUP_TEMP_LOG:-true}"
@@ -129,14 +125,21 @@ echo ""
 # Setup log directory
 LOG_DIR="/tmp"
 mkdir -p "$LOG_DIR"
+if [ -d "/tmp" ]; then
+    LOG_DIR="/tmp"
+else
+    LOG_DIR="/data/tmp"
+    mkdir -p "$LOG_DIR"
+fi
+echo "Log directory: ${LOG_DIR}"
 start_time=$(date +%Y%m%d_%H%M%S)
 
-# Arrays to store process info
-declare -a pids=()
-declare -a log_files=()
-declare -a device_ids=()
-declare -a core_masks=()
-declare -a failed_logs=()
+# Variables to store process info
+pids=""
+log_files=""
+device_ids=""
+core_masks=""
+failed_logs=""
 
 # Function to run single test process
 run_single_test() {
@@ -144,29 +147,28 @@ run_single_test() {
     local core_mask=$2
     local log_file=$3
 
-    # Build command arguments
-    local CMD_ARGS=(
-        "-m" "$RKNN_MODEL"
-        "-w" "$WEIGHT_MODEL"
-        "-c" "$core_mask"
-        "-i" "$IMG_PATH"
-        "-tl" "$time_loop"
-        "-id" "$device_id"
-        "-cl" "$cnt_loop"
-    )
+    # Build command string
+    local CMD_STRING=""
+    CMD_STRING="$CMD_STRING -m \"$RKNN_MODEL\""
+    CMD_STRING="$CMD_STRING -w \"$WEIGHT_MODEL\""
+    CMD_STRING="$CMD_STRING -c \"$core_mask\""
+    CMD_STRING="$CMD_STRING -i \"$IMG_PATH\""
+    CMD_STRING="$CMD_STRING -tl \"$time_loop\""
+    CMD_STRING="$CMD_STRING -id \"$device_id\""
+    CMD_STRING="$CMD_STRING -cl \"$cnt_loop\""
 
     # Add optional flags
     if [ "$use_yuv" == "1" ]; then
-        CMD_ARGS+=("--yuv")
+        CMD_STRING="$CMD_STRING --yuv"
     fi
 
     # Enable memory monitor if save_result is enabled
     if [ "$save_result" == "1" ]; then
-        CMD_ARGS+=("-mm")
+        CMD_STRING="$CMD_STRING -mm"
     fi
 
     # Execute rknn3_cnn_demo and redirect output to log file
-    rknn3_cnn_demo "${CMD_ARGS[@]}" >"$log_file" 2>&1
+    eval rknn3_cnn_demo $CMD_STRING >"$log_file" 2>&1
     local ret=$?
 
     # Parse results and save to file if enabled
@@ -264,10 +266,17 @@ for device_id in $device_list; do
         run_single_test "$device_id" "$core_mask" "$log_file" &
 
         # Store process info
-        pids+=($!)
-        log_files+=("$log_file")
-        device_ids+=("$device_id")
-        core_masks+=("$core_mask")
+        if [ -z "$pids" ]; then
+            pids="$!"
+            log_files="$log_file"
+            device_ids="$device_id"
+            core_masks="$core_mask"
+        else
+            pids="$pids $!"
+            log_files="$log_files $log_file"
+            device_ids="$device_ids $device_id"
+            core_masks="$core_masks $core_mask"
+        fi
     done
 done
 
@@ -277,18 +286,23 @@ failed_count=0
 success_count=0
 
 # Wait for all processes and collect results
-for i in "${!pids[@]}"; do
-    pid="${pids[$i]}"
+i=1
+for pid in $pids; do
+    log_file=$(echo "$log_files" | cut -d' ' -f$i)
+    device_id=$(echo "$device_ids" | cut -d' ' -f$i)
+    core_mask=$(echo "$core_masks" | cut -d' ' -f$i)
+
     if wait "$pid"; then
         success_count=$((success_count + 1))
     else
         failed_count=$((failed_count + 1))
-        # Record failed log path
-        log_basename=$(basename "${log_files[$i]}")
+        log_basename=$(basename "$log_file")
         failed_log_path="/data/rknn3_model_stress_test_log/${log_basename}"
-        failed_logs+=("$failed_log_path")
-        echo "[ERROR] Test failed: device ${device_ids[$i]}, core mask ${core_masks[$i]}"
+        failed_logs="$failed_logs $failed_log_path"
+        echo "[ERROR] Test failed: device ${device_id}, core mask ${core_mask}"
     fi
+
+    i=$((i + 1))
 done
 
 echo "All processes completed."
@@ -345,7 +359,7 @@ if [ "$save_result" == "1" ]; then
             avg_cost=""
 
             # Source the result file to get variables
-            source "$result_file"
+            . "$result_file"
 
             # Get common info from first result
             if [ "$first_result" = true ]; then
@@ -364,21 +378,21 @@ if [ "$save_result" == "1" ]; then
             total_time="${total_time:-0}"
 
             # Accumulate statistics (only if values are numeric)
-            if [[ "$fps" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+            if echo "$fps" | grep -Eq '^[0-9]+\.?[0-9]*$'; then
                 agg_total_fps=$(awk "BEGIN {printf \"%.2f\", $agg_total_fps + $fps}")
             fi
 
-            if [[ "$total_frames" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+            if echo "$total_frames" | grep -Eq '^[0-9]+\.?[0-9]*$'; then
                 agg_total_frames=$(awk "BEGIN {printf \"%.2f\", $agg_total_frames + $total_frames}")
             fi
 
-            if [[ "$avg_cost" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+            if echo "$avg_cost" | grep -Eq '^[0-9]+\.?[0-9]*$'; then
                 agg_sum_avg_cost=$(awk "BEGIN {printf \"%.2f\", $agg_sum_avg_cost + $avg_cost}")
             fi
 
             # Track maximum time
-            if [[ "$total_time" =~ ^[0-9]+\.?[0-9]*$ ]]; then
-                if (( $(awk "BEGIN {print ($total_time > $agg_max_time)}") )); then
+            if echo "$total_time" | grep -Eq '^[0-9]+\.?[0-9]*$'; then
+                if [ -z "$agg_max_time" ] || [ "$(echo "$total_time > $agg_max_time" | bc 2>/dev/null)" = "1" ]; then
                     agg_max_time=$total_time
                 fi
             fi
@@ -393,7 +407,7 @@ if [ "$save_result" == "1" ]; then
         RESULT_DIR="${SCRIPT_RUN_DIR}/test_results/performance"
         mkdir -p "$RESULT_DIR"
         RESULT_FILE="${RESULT_DIR}/cnn.log"
-        LOCK_FILE="${RESULT_FILE}.lock"
+        LOCK_DIR="${RESULT_FILE}.lockdir"
 
         # Calculate average cost (avoid division by zero)
         final_avg_cost="0.00"
@@ -422,14 +436,30 @@ Avg Cost: ${final_avg_cost} ms
 EOF
 )
 
-        # Write to result file with lock
-        (
-            flock -x 200
-            if [ -s "$RESULT_FILE" ]; then
-                echo "" >> "$RESULT_FILE"
+        # Use mkdir to implement lock mechanism (compatible with Android Toybox)
+        MAX_RETRIES=100
+        RETRY_COUNT=0
+
+        while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                echo "Warning: Lock acquisition timeout for $RESULT_FILE, forcing write"
+                rm -rf "$LOCK_DIR" 2>/dev/null
+                mkdir "$LOCK_DIR" 2>/dev/null || true
+                break
             fi
-            echo "$FINAL_REPORT" >> "$RESULT_FILE"
-        ) 200>"$LOCK_FILE"
+            sleep 0.1
+        done
+
+        # If file exists and is not empty, append a blank line first
+        if [ -s "$RESULT_FILE" ]; then
+            echo "" >> "$RESULT_FILE"
+        fi
+        # Append new content
+        echo "$FINAL_REPORT" >> "$RESULT_FILE"
+
+        # Release lock
+        rm -rf "$LOCK_DIR" 2>/dev/null
 
         echo "Test results saved to: ${RESULT_FILE}"
         echo ""
@@ -452,12 +482,15 @@ else
     echo "=========================================="
     echo ""
     echo "Failed test logs:"
-    for failed_log in "${failed_logs[@]}"; do
+    for failed_log in $failed_logs; do
         echo "  $failed_log"
     done
     echo ""
-    echo "To view error logs, run:"
-    echo "  cat ${failed_logs[0]}"
+    if [ -n "$failed_logs" ]; then
+        first_failed_log=$(echo "$failed_logs" | cut -d' ' -f1)
+        echo "To view error logs, run:"
+        echo "  cat $first_failed_log"
+    fi
     echo ""
     echo "=========================================="
     echo "[rknn3_multiple_stress_test_error]"
