@@ -138,14 +138,7 @@ get_new_tokens() {
 # Dynamic directory scanning functions
 # ============================================================================
 
-# Define expected model directories for each type
-declare -A EXPECTED_MODELS=(
-    ["cnn"]="Dinov3 Siglip2 YOLOv5s YOLOv6s YOLOv8s MobilenetV1 MobilenetV2 Resnet50-v2"
-    ["llm"]="Qwen2.5-3B-Instruct Qwen2.5-7B-Instruct Qwen2.5-1.5B-Instruct-core-4"
-    ["vlm"]="FasterVLM-llm InternVL3-2B InternVL3_5-4B Qwen2.5-VL-3B Qwen2.5-VL-7B Qwen3-VL-2B Qwen3-VL-4B"
-)
-
-# Scan for available model directories
+# Scan for available model directories using dynamic directory structure
 scan_model_directories() {
     local model_type="$1"
     local -n result_array="$2"  # Use nameref to modify the passed array
@@ -154,78 +147,141 @@ scan_model_directories() {
     result_array=()
     local count=0
 
-    # Get the expected models for this type
-    local expected_list="${EXPECTED_MODELS[$model_type]}"
+    # Define the base directory for this model type
+    local base_dir="../$model_type"
 
-    if [[ -z "$expected_list" ]]; then
-        echo -e "${RED}Error: Unknown model type '$model_type'${NC}"
+    echo -e "${CYAN}Scanning for $model_type models in directory: $base_dir/${NC}"
+
+    # Check if the directory exists
+    if [[ ! -d "$base_dir" ]]; then
+        echo -e "${YELLOW}Directory $base_dir does not exist for model type: $model_type${NC}"
+        echo -e "${BLUE}Please create the directory structure:${NC}"
+        echo "  mkdir -p ../cnn/"
+        echo "  mkdir -p ../llm/" 
+        echo "  mkdir -p ../vlm/"
         return 1
     fi
 
-    # Scan the parent directory for expected model directories
-    for model_name in $expected_list; do
-        if [[ -d "../$model_name" ]]; then
-            ((count++))
-            result_array["$count"]="$model_name"
+    # Check if directory is empty
+    if [[ -z "$(ls -A "$base_dir" 2>/dev/null)" ]]; then
+        echo -e "${YELLOW}Directory $base_dir is empty. No $model_type models found.${NC}"
+        return 1
+    fi
+
+    # Scan all subdirectories in the model type directory
+    local found_any=false
+    for model_dir in "$base_dir"/*; do
+        if [[ -d "$model_dir" ]]; then
+            local model_name=$(basename "$model_dir")
+            found_any=true
+
+            # Check if directory contains model files
+            local has_model_files=false
+
+            # Check for .rknn files
+            if [[ -n "$(find "$model_dir" -maxdepth 1 -name "*.rknn" 2>/dev/null)" ]]; then
+                has_model_files=true
+            fi
+
+            # Check for weight files
+            if [[ -n "$(find "$model_dir" -maxdepth 1 -name "*.weight" 2>/dev/null)" ]] || 
+               [[ -n "$(find "$model_dir" -maxdepth 1 -name "*.bin" 2>/dev/null)" ]]; then
+                has_model_files=true
+            fi
+
+            # Check for other common model file extensions
+            if [[ -n "$(find "$model_dir" -maxdepth 1 -name "*.gguf" 2>/dev/null)" ]] || 
+               [[ -n "$(find "$model_dir" -maxdepth 1 -name "*.ini" 2>/dev/null)" ]]; then
+                has_model_files=true
+            fi
+
+            if [[ "$has_model_files" == "true" ]]; then
+                ((count++))
+                result_array["$count"]="$model_name"
+                echo -e "${GREEN}Found valid $model_type model: $model_name${NC}"
+            else
+                echo -e "${YELLOW}Directory $model_dir exists but contains no recognizable model files, skipping${NC}"
+            fi
         fi
     done
 
-    if [[ $count -eq 0 ]]; then
+    if [[ "$found_any" == "false" ]]; then
+        echo -e "${YELLOW}No model directories found in $base_dir/${NC}"
         return 1
     fi
 
+    if [[ $count -eq 0 ]]; then
+        echo -e "${YELLOW}No valid $model_type models found in $base_dir (directories exist but contain no model files)${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}Found $count valid $model_type models in $base_dir/${NC}"
     return 0
 }
 
-# Scan for ALL available model directories (all types) - MODIFIED: Filter out core-* models
+# Scan for ALL available model directories (all types) using new directory structure
 scan_all_model_directories() {
     local -n result_array="$1"  # Use nameref to modify the passed array
 
     # Clear the result array
     result_array=()
-    local count=0
+    local total_count=0
+
+    echo -e "${CYAN}Scanning for all models using directory structure: ../cnn/, ../llm/, ../vlm/${NC}"
+    echo
 
     # Scan for each model type
     for model_type in "cnn" "llm" "vlm"; do
         declare -A found_models
+        echo -e "${BLUE}Scanning $model_type models in ../$model_type/${NC}"
+
         if scan_model_directories "$model_type" found_models; then
             for index in $(echo "${!found_models[@]}" | tr ' ' '\n' | sort -n); do
                 local model_name="${found_models[$index]}"
-                # Filter out models containing "core-"
+                # Filter out models containing "core-" if needed
                 if [[ ! "$model_name" =~ core- ]]; then
-                    ((count++))
-                    result_array["$count"]="$model_name $model_type"
+                    ((total_count++))
+                    result_array["$total_count"]="$model_name $model_type"
+                    echo -e "${GREEN}Added model: $model_name ($model_type)${NC}"
+                else
+                    echo -e "${YELLOW}Filtered out core model: $model_name${NC}"
                 fi
             done
+        else
+            echo -e "${YELLOW}No models found for type: $model_type${NC}"
         fi
+        echo
     done
 
-    if [[ $count -eq 0 ]]; then
+    if [[ $total_count -eq 0 ]]; then
+        echo -e "${RED}No models found in any directory!${NC}"
+        echo
+        echo -e "${YELLOW}Please ensure the following directory structure exists:${NC}"
+        echo "  ../cnn/     - for CNN models (e.g., ../cnn/MobilenetV2/)"
+        echo "  ../llm/     - for LLM models (e.g., ../llm/Qwen2.5-3B-Instruct/)"
+        echo "  ../vlm/     - for VLM models (e.g., ../vlm/Qwen3-VL-2B/)"
+        echo
+        echo -e "${BLUE}Each model directory should contain the corresponding model files.${NC}"
         return 1
     fi
 
+    echo -e "${GREEN}Total models found: $total_count${NC}"
     return 0
 }
 
-# Get the full model path
+# Get the full model path with type-specific directory support - FIXED VERSION
 get_model_path() {
     local model_name="$1"
+    local model_type="$2"  # Model type parameter
 
-    # Try different possible path patterns
-    local possible_paths=(
-        "../$model_name"
-    )
-
-    for path in "${possible_paths[@]}"; do
-        # Check if path exists as a file, directory, or contains .rknn files
-        if [[ -e "$path" ]] || [[ -e "$path.rknn" ]] || [[ -n "$(ls "$path"/*.rknn 2>/dev/null)" ]]; then
-            echo "$path"
-            return 0
-        fi
-    done
-
-    # If no specific model file found, return the directory path
-    echo "../$model_name"
+    # Always use the new directory structure: ../<model_type>/<model_name>
+    # This ensures we only search in type-specific directories
+    if [[ -n "$model_type" ]]; then
+        echo "../$model_type/$model_name"
+    else
+        # Fallback (should not happen with proper usage)
+        echo "../$model_name"
+    fi
 }
 
 # ============================================================================
@@ -665,6 +721,9 @@ reboot_test() {
             for ((i=1; i<=loop_count; i++)); do
                 log_info "=== Reboot Test Iteration $i of $loop_count ==="
 
+                # The background program of npu needs to be closed first
+                pkill -f "rknn3_transfer_proxy"
+
                 # Step 1: Hardware reset
                 log_info "1. Executing hardware reset: rknn-smi reset -t hw"
                 rknn-smi reset -t hw 2>/dev/null
@@ -733,11 +792,9 @@ rknn_smi_test_menu() {
         show_test_header
         echo -e "${PURPLE}RKNN-SMI Test Menu${NC}"
         echo "========================================"
-        echo "1. Run Comprehensive RKNN-SMI Test"
-        echo "2. Query Basic Information Only"
-        echo "3. Query Detailed Status Only"
-        echo "4. Reboot Test"
-        echo "5. Return to Main Menu"
+        echo "1. Run RKNN-SMI Test"
+        echo "2. Reboot Test"
+        echo "3. Return to Main Menu"
         echo
 
         read -rp "Please select an option (1-4): " choice
@@ -749,65 +806,11 @@ rknn_smi_test_menu() {
                 wait_return
                 ;;
             2)
-                echo -e "${YELLOW}Querying basic RKNN-SMI information...${NC}"
-                # Extract and run only the query parts from rknn_smi_test
-                {
-                    # Color definitions
-                    local RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'
-
-                    # Check command exists
-                    if ! command -v rknn-smi &> /dev/null; then
-                        echo -e "${RED}rknn-smi command not found${NC}"
-                        return 1
-                    fi
-
-                    echo -e "${BLUE}=== Basic RKNN Device Information Query ===${NC}"
-                    echo "1. Query version information:"
-                    rknn-smi -v
-                    echo
-                    echo "2. Query device information:"
-                    rknn-smi info
-                    echo
-                    echo "3. Query topology information:"
-                    rknn-smi info -l
-                    echo
-                    echo "4. Query all devices and chips detailed information:"
-                    rknn-smi info -t board
-                    echo
-                }
-                wait_return
-                ;;
-            3)
-                echo -e "${YELLOW}Querying detailed RKNN-SMI status...${NC}"
-                # Extract and run only the detailed query parts from rknn_smi_test
-                {
-                    # Color definitions
-                    local RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'
-
-                    # Check command exists
-                    if ! command -v rknn-smi &> /dev/null; then
-                        echo -e "${RED}rknn-smi command not found${NC}"
-                        return 1
-                    fi
-
-                    echo -e "${BLUE}=== Detailed RKNN Device Status Query ===${NC}"
-                    local info_types=("memory" "fan" "temp" "voltage" "health" "sys_time" "reset_reason" "pcie_err")
-                    local type_names=("Memory Information" "Fan Speed Ratio" "Temperature Information" "Voltage Information" "Health Status" "System Time" "Last Reset Time" "PCIe Error Count")
-
-                    for i in "${!info_types[@]}"; do
-                        echo "$((i+1)). Query all devices ${type_names[i]}:"
-                        rknn-smi info -t ${info_types[i]}
-                        echo
-                    done
-                }
-                wait_return
-                ;;
-            4)
                 echo -e "${YELLOW}Starting Reboot Test...${NC}"
                 reboot_test
                 wait_return
                 ;;
-            5)
+            3)
                 return
                 ;;
             *)
@@ -2046,7 +2049,7 @@ loop_test_all_models() {
             local model_info=(${all_models[$index]})
             local model_name="${model_info[0]}"
             local model_type="${model_info[1]}"
-            local model_path=$(get_model_path "$model_name")
+            local model_path=$(get_model_path "$model_name" "$model_type")
 
             # MODIFIED: Set device core based on model type
             local devices_core="0xff"  # Default for LLM/VLM
@@ -2100,7 +2103,7 @@ loop_test_all_models() {
             local model_info=(${all_models[$index]})
             local model_name="${model_info[0]}"
             local model_type="${model_info[1]}"
-            local model_path=$(get_model_path "$model_name")
+            local model_path=$(get_model_path "$model_name" "$model_type")
 
             # MODIFIED: Set device core based on model type
             local devices_core="0xff"  # Default for LLM/VLM
@@ -2171,7 +2174,7 @@ loop_test_all_models() {
 # Dynamic menu generation functions
 # ============================================================================
 
-# Generic dynamic menu generation function
+# Generic dynamic menu generation function - FIXED VERSION
 generate_test_menu() {
     local menu_type="$1"
     local menu_title="$2"
@@ -2192,7 +2195,7 @@ generate_test_menu() {
             echo
             echo -e "${BLUE}Please ensure:${NC}"
             echo "1. Model directories are placed in the parent directory (../)"
-            echo "2. Directory names match expected patterns: ${EXPECTED_MODELS[$menu_type]}"
+            echo "2. Directory names match expected patterns"
             echo "3. Model files exist in the directories"
             echo
             echo "1. Rescan directories"
@@ -2244,13 +2247,57 @@ generate_test_menu() {
                 ((selected_index++))
                 if [[ $selected_index -eq $choice ]]; then
                     local model_name="${found_models[$index]}"
-                    local model_path=$(get_model_path "$model_name")
 
-                    # Validate model path exists
-                    if [[ ! -e "$model_path" ]] && [[ ! -e "$model_path.rknn" ]] && [[ -z "$(ls "$model_path"/*.rknn 2>/dev/null)" ]]; then
+                    # FIXED: Use $menu_type instead of undefined $model_type
+                    local model_path=$(get_model_path "$model_name" "$menu_type")
+
+                    echo -e "${YELLOW}Debug: Model name: $model_name, Menu type: $menu_type, Model path: $model_path${NC}"
+
+                    # Enhanced path validation
+                    local has_model_files=false
+
+                    # Check for model files in various locations
+                    if [[ -d "$model_path" ]]; then
+                        echo -e "${YELLOW}Debug: Directory exists: $model_path${NC}"
+                        if [[ -n "$(find "$model_path" -maxdepth 1 \( -name "*.rknn" -o -name "*.weight" -o -name "*.bin" -o -name "*.gguf" -o -name "*.ini" \) 2>/dev/null)" ]]; then
+                            has_model_files=true
+                            echo -e "${GREEN}Debug: Found model files in main directory${NC}"
+                        elif [[ -d "$model_path/models" ]] && [[ -n "$(find "$model_path/models" -maxdepth 1 \( -name "*.rknn" -o -name "*.weight" -o -name "*.bin" \) 2>/dev/null)" ]]; then
+                            has_model_files=true
+                            echo -e "${GREEN}Debug: Found model files in models subdirectory${NC}"
+                        else
+                            echo -e "${YELLOW}Debug: No model files found in: $model_path${NC}"
+                            echo "Directory contents:"
+                            ls -la "$model_path" 2>/dev/null || echo "Cannot list directory contents"
+                        fi
+                    elif [[ -e "$model_path.rknn" ]]; then
+                        has_model_files=true
+                        echo -e "${GREEN}Debug: Found direct .rknn file: $model_path.rknn${NC}"
+                    else
+                        echo -e "${YELLOW}Debug: Path does not exist: $model_path${NC}"
+                    fi
+
+                    if [[ "$has_model_files" != "true" ]]; then
                         echo -e "${RED}Model files not found for $model_name!${NC}"
                         echo "Expected path: $model_path"
                         echo "Please check if the model files exist in the directory."
+
+                        # Debug information
+                        echo -e "${YELLOW}Debug information:${NC}"
+                        if [[ -d "$model_path" ]]; then
+                            echo "Directory exists. Contents:"
+                            ls -la "$model_path" 2>/dev/null || echo "Cannot list directory contents"
+                            echo
+                            echo "Searching for model files..."
+                            find "$model_path" -name "*.rknn" -o -name "*.weight" -o -name "*.bin" -o -name "*.gguf" -o -name "*.ini" 2>/dev/null
+                        else
+                            echo "Path does not exist: $model_path"
+                            # Check if direct file exists
+                            if [[ -e "$model_path.rknn" ]]; then
+                                echo "But found direct file: $model_path.rknn"
+                            fi
+                        fi
+
                         wait_return
                         continue
                     fi
@@ -2258,18 +2305,7 @@ generate_test_menu() {
                     echo -e "${GREEN}Selected model: $model_name${NC}"
                     echo -e "${BLUE}Model path: $model_path${NC}"
 
-                    # Ask for execution mode
-                    # echo
-                    # echo -e "${CYAN}Select execution mode:${NC}"
-                    # echo "1. Run in foreground (wait for completion)"
-                    # echo "2. Run in background (continue using menu)"
-                    # read -rp "Please select execution mode (1-2): " exec_choice
-
-                    # if [[ "$exec_choice" == "2" ]]; then
-                    #     test_model "$model_name" "$menu_type" "$model_path" "true"
-                    # else
-                    #     test_model "$model_name" "$menu_type" "$model_path" "false"
-                    # fi
+                    # FIXED: Use $menu_type instead of undefined $model_type
                     test_model "$model_name" "$menu_type" "$model_path" "false"
                     break
                 fi
@@ -2279,7 +2315,6 @@ generate_test_menu() {
         fi
     done
 }
-
 # ============================================================================
 # Core functionality functions
 # ============================================================================
@@ -2344,20 +2379,19 @@ main_menu() {
         show_test_header
         echo -e "${GREEN}Main Menu Options:${NC}"
         echo "1. RKNN Test"
-        echo "2. Background Tasks Management"
-        echo "3. View Test Logs"
-        echo "4. RKNN-SMI Test"
-        echo "5. Exit"
+        echo "2. View Test Logs"
+        echo "3. RKNN-SMI Test"
+        echo "4. Exit"
         echo
 
         read -rp "Please select an operation (1-5): " choice
 
         case $choice in
             1) rknn_test_menu ;;
-            2) background_tasks_management_menu ;;
-            3) view_test_logs ;;
-            4) rknn_smi_test_menu ;;
-            5)
+            # 2) background_tasks_management_menu ;;
+            2) view_test_logs ;;
+            3) rknn_smi_test_menu ;;
+            4)
                 # Check if there are running background tasks
                 # 确保目录存在
                 mkdir -p "$BACKGROUND_TASKS_DIR"
