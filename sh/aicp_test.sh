@@ -1375,6 +1375,551 @@ test_model_with_params() {
 }
 
 # ============================================================================
+# Performance Report Generation Functions
+# ============================================================================
+
+# Generate Comprehensive Performance Report
+generate_performance_report() {
+    local performance_dir="$1"
+    local total_models="$2"
+    local successful_tests="$3"
+    local failed_tests="$4"
+
+    local report_file="$performance_dir/Performance_Report_$(date +%Y%m%d_%H%M%S).txt"
+
+    echo
+    echo -e "${CYAN}Generating Performance Report...${NC}"
+    echo -e "Report File: $report_file"
+
+    # Create report file and start writing
+    {
+        echo "================================================"
+        echo "           AI Co-processor Performance Test Report"
+        echo "================================================"
+        echo "Generation Time: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "Report File: $report_file"
+        echo
+
+        # Add RKNN-SMI version information
+        echo "=== RKNN-SMI Version Information ==="
+        if command -v rknn-smi &> /dev/null; then
+            rknn-smi --version 2>/dev/null
+        else
+            echo "rknn-smi command not found"
+        fi
+        echo
+
+        # Test Summary
+        echo "=== Test Summary ==="
+        echo "Total Test Models: $total_models"
+        echo "Successful Tests: $successful_tests"
+        echo "Failed Tests: $failed_tests"
+        if [[ $total_models -gt 0 ]]; then
+            local success_rate=$((successful_tests * 100 / total_models))
+            echo "Test Success Rate: ${success_rate}%"
+        else
+            echo "Test Success Rate: 0%"
+        fi
+        echo
+
+        # Test Parameters
+        echo "=== Test Parameters ==="
+        echo "Loop Count: $LOOP"
+        echo "Device ID: $DEVICES_ID"
+        echo "Device Core: $DEVICES_CORE"
+        echo
+
+        # CNN Model Performance Analysis
+        if [[ -f "$performance_dir/cnn.log" ]] && [[ -s "$performance_dir/cnn.log" ]]; then
+            echo "=== CNN Model Performance Analysis ==="
+            analyze_cnn_performance "$performance_dir/cnn.log"
+            echo
+        else
+            echo "=== CNN Model Performance Analysis ==="
+            echo "No CNN model performance data"
+            echo
+        fi
+
+        # LLM Model Performance Analysis
+        if [[ -f "$performance_dir/llm.log" ]] && [[ -s "$performance_dir/llm.log" ]]; then
+            echo "=== LLM Model Performance Analysis ==="
+            analyze_llm_performance "$performance_dir/llm.log"
+            echo
+        else
+            echo "=== LLM Model Performance Analysis ==="
+            echo "No LLM model performance data"
+            echo
+        fi
+
+        # VLM Model Performance Analysis
+        if [[ -f "$performance_dir/vlm.log" ]] && [[ -s "$performance_dir/vlm.log" ]]; then
+            echo "=== VLM Model Performance Analysis ==="
+            analyze_vlm_performance "$performance_dir/vlm.log"
+            echo
+        else
+            echo "=== VLM Model Performance Analysis ==="
+            echo "No VLM model performance data"
+            echo
+        fi
+
+        # Performance Comparison Summary
+        echo "=== Performance Comparison Summary ==="
+        generate_performance_comparison "$performance_dir" "$total_models" "$successful_tests" "$failed_tests"
+        echo
+
+        echo "================================================"
+        echo "              Report Generation Completed"
+        echo "================================================"
+
+    } > "$report_file"
+
+    # Display report generation success message
+    echo -e "${GREEN}Performance Report Generated: $report_file${NC}"
+    echo
+    echo -e "${CYAN}Report Summary:${NC}"
+    echo "================================================"
+    echo "Total Test Models: $total_models"
+    echo "Successful: $successful_tests"
+    echo "Failed: $failed_tests"
+    if [[ $total_models -gt 0 ]]; then
+        local success_rate=$((successful_tests * 100 / total_models))
+        echo "Success Rate: ${success_rate}%"
+    else
+        echo "Success Rate: 0%"
+    fi
+    echo "Report File: $report_file"
+    echo "================================================"
+}
+
+# CNN Model Performance Analysis
+analyze_cnn_performance() {
+    local cnn_log="$1"
+
+    if [[ ! -f "$cnn_log" ]] || [[ ! -s "$cnn_log" ]]; then
+        echo "No CNN performance data"
+        return
+    fi
+
+    # Count number of models
+    local model_count=$(grep -c "^cnn:" "$cnn_log")
+    echo "CNN Model Count: $model_count"
+    echo
+
+    # Display each model's performance data
+    echo "Individual Model Performance Data:"
+    echo "------------------------------------------------"
+
+    # Use awk to parse performance data
+    awk '
+    /^cnn:/ {
+        if (model != "") {
+            print "Model: " model
+            print "Core: " core
+            print "Input Dimensions: " input_width "x" input_height "x" input_channel
+            print "Total Frames: " total_frames
+            print "Total Time: " total_time
+            print "FPS: " fps
+            print "Average Cost: " avg_cost
+            print "------------------------------------------------"
+        }
+        model = ""; core = ""; input_width = ""; input_height = ""; input_channel = ""
+        total_frames = ""; total_time = ""; fps = ""; avg_cost = ""
+    }
+    /^model:/ { model = $2 }
+    /^core:/ { core = $2 }
+    /^input_width:/ { input_width = $2 }
+    /^input_height:/ { input_height = $2 }
+    /^input_channel:/ { input_channel = $2 }
+    /^total_frames:/ { total_frames = $2 }
+    /^total_time:/ { total_time = $2 " " $3 " " $4 }
+    /^fps:/ { fps = $2 }
+    /^avg_cost:/ { avg_cost = $2 " " $3 }
+    END {
+        if (model != "") {
+            print "Model: " model
+            print "Core: " core
+            print "Input Dimensions: " input_width "x" input_height "x" input_channel
+            print "Total Frames: " total_frames
+            print "Total Time: " total_time
+            print "FPS: " fps
+            print "Average Cost: " avg_cost
+            print "------------------------------------------------"
+        }
+    }
+    ' "$cnn_log"
+
+    # Calculate performance statistics
+    local avg_fps=$(awk '/^fps:/ {sum += $2; count++} END {if (count>0) printf "%.2f", sum/count}' "$cnn_log" 2>/dev/null || echo "N/A")
+    local max_fps=$(awk 'BEGIN{max=0} /^fps:/ {if ($2 > max) max = $2} END {print max+0}' "$cnn_log" 2>/dev/null || echo "N/A")
+    local min_fps=$(awk 'BEGIN{min=999999} /^fps:/ {if ($2 < min) min = $2} END {print min+0}' "$cnn_log" 2>/dev/null || echo "N/A")
+    local best_model=$(awk '/^fps:/ {fps=$2} /^model:/ {model=$2} {if (fps == '"$max_fps"') {print model; exit}}' "$cnn_log" 2>/dev/null || echo "N/A")
+
+    echo
+    echo "Performance Statistics:"
+    echo "Average FPS: ${avg_fps}"
+    echo "Maximum FPS: ${max_fps} (Model: ${best_model})"
+    echo "Minimum FPS: ${min_fps}"
+    if [[ "$max_fps" != "N/A" ]] && [[ "$min_fps" != "N/A" ]]; then
+        local fps_range=$((max_fps - min_fps))
+        echo "FPS Range: $fps_range"
+    fi
+}
+
+# LLM Model Performance Analysis
+analyze_llm_performance() {
+    local llm_log="$1"
+
+    if [[ ! -f "$llm_log" ]] || [[ ! -s "$llm_log" ]]; then
+        echo "No LLM performance data"
+        return
+    fi
+
+    # Count number of models
+    local model_count=$(grep -c "^llm:" "$llm_log")
+    echo "LLM Model Count: $model_count"
+    echo
+
+    # Display each model's performance data
+    echo "Individual Model Performance Data:"
+    echo "------------------------------------------------"
+
+    awk '
+    /^llm:/ {
+        if (model != "") {
+            print "Model: " model
+            print "Core: " core
+            print "Sequence Length: " seq_len
+            print "Generated Tokens: " token
+            print "Time to First Token (TTFT): " ttft
+            print "Time Per Output Token (TPOT): " tpot
+            print "Prefill Speed: " prefill
+            print "Tokens Per Second (TPS): " tps
+            print "Total Time: " total_time
+            print "Total Runs: " total_runs
+            print "------------------------------------------------"
+        }
+        model = ""; core = ""; seq_len = ""; token = ""; ttft = ""; tpot = ""
+        prefill = ""; tps = ""; total_time = ""; total_runs = ""
+    }
+    /^model:/ { model = $2 }
+    /^core:/ { core = $2 }
+    /^seq_len:/ { seq_len = $2 }
+    /^token:/ { token = $2 }
+    /^TTFT:/ { ttft = $2 " " $3 }
+    /^TPOT:/ { tpot = $2 " " $3 " " $4 }
+    /^Prefill:/ { prefill = $2 " " $3 " " $4 }
+    /^TPS:/ { tps = $2 " " $3 " " $4 }
+    /^TotalTime:/ { total_time = $2 " " $3 " " $4 }
+    /^TotalRuns:/ { total_runs = $2 }
+    END {
+        if (model != "") {
+            print "Model: " model
+            print "Core: " core
+            print "Sequence Length: " seq_len
+            print "Generated Tokens: " token
+            print "Time to First Token (TTFT): " ttft
+            print "Time Per Output Token (TPOT): " tpot
+            print "Prefill Speed: " prefill
+            print "Tokens Per Second (TPS): " tps
+            print "Total Time: " total_time
+            print "Total Runs: " total_runs
+            print "------------------------------------------------"
+        }
+    }
+    ' "$llm_log"
+
+    # Calculate performance statistics - FIXED: Use awk for all calculations to avoid bash arithmetic errors
+    local avg_ttft=$(awk '/^TTFT:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count; else print "N/A"}' "$llm_log" 2>/dev/null)
+    local avg_tps=$(awk '/^TPS:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count; else print "N/A"}' "$llm_log" 2>/dev/null)
+    local max_tps=$(awk 'BEGIN{max=0} /^TPS:/ {gsub(/[^0-9.]/, "", $2); if ($2+0 > max+0) max=$2+0} END {if (max>0) printf "%.2f", max; else print "N/A"}' "$llm_log" 2>/dev/null)
+
+    # Use awk to find the best model to avoid bash arithmetic issues
+    local best_model=$(awk '
+    /^TPS:/ {
+        gsub(/[^0-9.]/, "", $2);
+        current_tps = $2+0;
+        if (current_tps > max_tps) {
+            max_tps = current_tps;
+            best_model = "";
+        }
+    }
+    /^model:/ {
+        if (best_model == "" && max_tps > 0) {
+            best_model = $2;
+        }
+    }
+    END {
+        if (best_model != "") print best_model;
+        else print "N/A";
+    }' "$llm_log" 2>/dev/null)
+
+    echo
+    echo "Performance Statistics:"
+    echo "Average TTFT: ${avg_ttft} ms"
+    echo "Average TPS: ${avg_tps} tokens/s"
+    echo "Maximum TPS: ${max_tps} tokens/s (Model: ${best_model})"
+}
+
+# VLM Model Performance Analysis
+analyze_vlm_performance() {
+    local vlm_log="$1"
+
+    if [[ ! -f "$vlm_log" ]] || [[ ! -s "$vlm_log" ]]; then
+        echo "No VLM performance data"
+        return
+    fi
+
+    # Count number of models
+    local model_count=$(grep -c "^vlm:" "$vlm_log")
+    echo "VLM Model Count: $model_count"
+    echo
+
+    # Display each model's performance data
+    echo "Individual Model Performance Data:"
+    echo "------------------------------------------------"
+
+    awk '
+    /^vlm:/ {
+        if (model != "") {
+            print "Model: " model
+            print "Core: " core
+            print "Input Dimensions: " input_width "x" input_height
+            print "Vision Processing Time: " vision
+            print "Generated Tokens: " gen_len
+            print "Time to First Token (TTFT): " ttft
+            print "Tokens Per Second (TPS): " tps
+            print "Total Time: " total_time
+            print "Total Runs: " total_runs
+            print "------------------------------------------------"
+        }
+        model = ""; core = ""; input_width = ""; input_height = ""; vision = ""
+        gen_len = ""; ttft = ""; tps = ""; total_time = ""; total_runs = ""
+    }
+    /^model:/ { model = $2 }
+    /^core:/ { core = $2 }
+    /^input_width:/ { input_width = $2 }
+    /^input_height:/ { input_height = $2 }
+    /^Vision:/ { vision = $2 " " $3 " " $4 }
+    /^GenLen:/ { gen_len = $2 " " $3 " " $4 }
+    /^TTFT:/ { ttft = $2 " " $3 " " $4 }
+    /^TPS:/ { tps = $2 " " $3 " " $4 }
+    /^TotalTime:/ { total_time = $2 " " $3 " " $4 }
+    /^TotalRuns:/ { total_runs = $2 }
+    END {
+        if (model != "") {
+            print "Model: " model
+            print "Core: " core
+            print "Input Dimensions: " input_width "x" input_height
+            print "Vision Processing Time: " vision
+            print "Generated Tokens: " gen_len
+            print "Time to First Token (TTFT): " ttft
+            print "Tokens Per Second (TPS): " tps
+            print "Total Time: " total_time
+            print "Total Runs: " total_runs
+            print "------------------------------------------------"
+        }
+    }
+    ' "$vlm_log"
+
+    # Calculate performance statistics - FIXED: Use awk for all calculations
+    local avg_ttft=$(awk '/^TTFT:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count; else print "N/A"}' "$vlm_log" 2>/dev/null)
+    local avg_tps=$(awk '/^TPS:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count; else print "N/A"}' "$vlm_log" 2>/dev/null)
+    local max_tps=$(awk 'BEGIN{max=0} /^TPS:/ {gsub(/[^0-9.]/, "", $2); if ($2+0 > max+0) max=$2+0} END {if (max>0) printf "%.2f", max; else print "N/A"}' "$vlm_log" 2>/dev/null)
+
+    # Use awk to find the best model
+    local best_model=$(awk '
+    /^TPS:/ {
+        gsub(/[^0-9.]/, "", $2);
+        current_tps = $2+0;
+        if (current_tps > max_tps) {
+            max_tps = current_tps;
+            best_model = "";
+        }
+    }
+    /^model:/ {
+        if (best_model == "" && max_tps > 0) {
+            best_model = $2;
+        }
+    }
+    END {
+        if (best_model != "") print best_model;
+        else print "N/A";
+    }' "$vlm_log" 2>/dev/null)
+
+    echo
+    echo "Performance Statistics:"
+    echo "Average TTFT: ${avg_ttft} ms"
+    echo "Average TPS: ${avg_tps} tokens/s"
+    echo "Maximum TPS: ${max_tps} tokens/s (Model: ${best_model})"
+}
+
+# CNN Model Performance Analysis
+analyze_cnn_performance() {
+    local cnn_log="$1"
+
+    if [[ ! -f "$cnn_log" ]] || [[ ! -s "$cnn_log" ]]; then
+        echo "No CNN performance data"
+        return
+    fi
+
+    # Count number of models
+    local model_count=$(grep -c "^cnn:" "$cnn_log")
+    echo "CNN Model Count: $model_count"
+    echo
+
+    # Display each model's performance data
+    echo "Individual Model Performance Data:"
+    echo "------------------------------------------------"
+
+    # Use awk to parse performance data
+    awk '
+    /^cnn:/ {
+        if (model != "") {
+            print "Model: " model
+            print "Core: " core
+            print "Input Dimensions: " input_width "x" input_height "x" input_channel
+            print "Total Frames: " total_frames
+            print "Total Time: " total_time
+            print "FPS: " fps
+            print "Average Cost: " avg_cost
+            print "------------------------------------------------"
+        }
+        model = ""; core = ""; input_width = ""; input_height = ""; input_channel = ""
+        total_frames = ""; total_time = ""; fps = ""; avg_cost = ""
+    }
+    /^model:/ { model = $2 }
+    /^core:/ { core = $2 }
+    /^input_width:/ { input_width = $2 }
+    /^input_height:/ { input_height = $2 }
+    /^input_channel:/ { input_channel = $2 }
+    /^total_frames:/ { total_frames = $2 }
+    /^total_time:/ { total_time = $2 " " $3 " " $4 }
+    /^fps:/ { fps = $2 }
+    /^avg_cost:/ { avg_cost = $2 " " $3 }
+    END {
+        if (model != "") {
+            print "Model: " model
+            print "Core: " core
+            print "Input Dimensions: " input_width "x" input_height "x" input_channel
+            print "Total Frames: " total_frames
+            print "Total Time: " total_time
+            print "FPS: " fps
+            print "Average Cost: " avg_cost
+            print "------------------------------------------------"
+        }
+    }
+    ' "$cnn_log"
+
+    # Calculate performance statistics - FIXED: Use proper awk formatting
+    local avg_fps=$(awk '/^fps:/ {sum += $2; count++} END {if (count>0) printf "%.2f", sum/count; else print "N/A"}' "$cnn_log" 2>/dev/null)
+    local max_fps=$(awk 'BEGIN{max=0} /^fps:/ {if ($2 > max) max = $2} END {if (max>0) printf "%.2f", max; else print "N/A"}' "$cnn_log" 2>/dev/null)
+    local min_fps=$(awk 'BEGIN{min=999999} /^fps:/ {if ($2 < min) min = $2} END {if (min<999999) printf "%.2f", min; else print "N/A"}' "$cnn_log" 2>/dev/null)
+
+    # Use awk to find the best model
+    local best_model=$(awk '
+    /^fps:/ {
+        current_fps = $2+0;
+        if (current_fps > max_fps) {
+            max_fps = current_fps;
+            best_model = "";
+        }
+    }
+    /^model:/ {
+        if (best_model == "" && max_fps > 0) {
+            best_model = $2;
+        }
+    }
+    END {
+        if (best_model != "") print best_model;
+        else print "N/A";
+    }' "$cnn_log" 2>/dev/null)
+
+    echo
+    echo "Performance Statistics:"
+    echo "Average FPS: ${avg_fps}"
+    echo "Maximum FPS: ${max_fps} (Model: ${best_model})"
+    echo "Minimum FPS: ${min_fps}"
+
+    # Calculate FPS range only if both values are numeric
+    if [[ "$max_fps" != "N/A" ]] && [[ "$min_fps" != "N/A" ]] && [[ "$max_fps" =~ ^[0-9.]+$ ]] && [[ "$min_fps" =~ ^[0-9.]+$ ]]; then
+        # Use bc for floating point arithmetic
+        local fps_range=$(echo "$max_fps - $min_fps" | bc 2>/dev/null || echo "N/A")
+        echo "FPS Range: $fps_range"
+    else
+        echo "FPS Range: N/A"
+    fi
+}
+
+# Generate Performance Comparison Summary
+generate_performance_comparison() {
+    local performance_dir="$1"
+    local total_models="$2"
+    local successful_tests="$3"
+    local failed_tests="$4"
+
+    echo "Performance Comparison Summary:"
+    echo "------------------------------------------------"
+
+    # Count models by type
+    local cnn_count=0
+    local llm_count=0
+    local vlm_count=0
+
+    if [[ -f "$performance_dir/cnn.log" ]] && [[ -s "$performance_dir/cnn.log" ]]; then
+        cnn_count=$(grep -c "^cnn:" "$performance_dir/cnn.log")
+    fi
+
+    if [[ -f "$performance_dir/llm.log" ]] && [[ -s "$performance_dir/llm.log" ]]; then
+        llm_count=$(grep -c "^llm:" "$performance_dir/llm.log")
+    fi
+
+    if [[ -f "$performance_dir/vlm.log" ]] && [[ -s "$performance_dir/vlm.log" ]]; then
+        vlm_count=$(grep -c "^vlm:" "$performance_dir/vlm.log")
+    fi
+
+    echo "Total Test Models: $total_models"
+    echo "CNN Models: $cnn_count"
+    echo "LLM Models: $llm_count"
+    echo "VLM Models: $vlm_count"
+    echo
+
+    # Performance metrics comparison
+    echo "Best Performance Model Comparison:"
+    echo "------------------------------------------------"
+
+    # CNN performance comparison
+    if [[ $cnn_count -gt 0 ]]; then
+        local best_cnn_fps=$(awk 'BEGIN{max=0} /^fps:/ {if ($2 > max) max = $2} END {print max+0}' "$performance_dir/cnn.log" 2>/dev/null || echo "N/A")
+        local best_cnn_model=$(awk '/^fps:/ {fps=$2} /^model:/ {model=$2} {if (fps == '"$best_cnn_fps"') {print model; exit}}' "$performance_dir/cnn.log" 2>/dev/null || echo "N/A")
+        echo "CNN Highest FPS: $best_cnn_fps (Model: $best_cnn_model)"
+    fi
+
+    # LLM performance comparison
+    if [[ $llm_count -gt 0 ]]; then
+        local best_llm_tps=$(awk 'BEGIN{max=0} /^TPS:/ {gsub(/[^0-9.]/, "", $2); if ($2 > max) max = $2} END {print max+0}' "$performance_dir/llm.log" 2>/dev/null || echo "N/A")
+        local best_llm_model=$(awk '/^TPS:/ {gsub(/[^0-9.]/, "", $2); tps=$2} /^model:/ {model=$2} {if (tps == '"$best_llm_tps"') {print model; exit}}' "$performance_dir/llm.log" 2>/dev/null || echo "N/A")
+        echo "LLM Highest TPS: $best_llm_tps tokens/s (Model: $best_llm_model)"
+    fi
+
+    # VLM performance comparison
+    if [[ $vlm_count -gt 0 ]]; then
+        local best_vlm_tps=$(awk 'BEGIN{max=0} /^TPS:/ {gsub(/[^0-9.]/, "", $2); if ($2 > max) max = $2} END {print max+0}' "$performance_dir/vlm.log" 2>/dev/null || echo "N/A")
+        local best_vlm_model=$(awk '/^TPS:/ {gsub(/[^0-9.]/, "", $2); tps=$2} /^model:/ {model=$2} {if (tps == '"$best_vlm_tps"') {print model; exit}}' "$performance_dir/vlm.log" 2>/dev/null || echo "N/A")
+        echo "VLM Highest TPS: $best_vlm_tps tokens/s (Model: $best_vlm_model)"
+    fi
+
+    echo
+    echo "Test Result Summary:"
+    echo "------------------------------------------------"
+    if [[ $failed_tests -eq 0 ]]; then
+        echo "Overall Status: All tests completed successfully ✓"
+    else
+        echo "Overall Status: Some tests failed, please check logs ✗"
+    fi
+    echo "Recommendation: Evaluate model suitability based on specific performance data"
+}
+
+# ============================================================================
 # Loop testing functionality
 # ============================================================================
 
@@ -1383,6 +1928,12 @@ loop_test_all_models() {
     show_test_header
     echo -e "${PURPLE}Loop Test All Models${NC}"
     echo "Scanning ../ directory for all available models..."
+    echo
+
+    local performance_dir="$TEST_RESULTS_DIR/performance"
+    rm -rf "$performance_dir"
+    mkdir -p "$performance_dir"
+    echo -e "${GREEN}The performance data directory has been created: $performance_dir${NC}"
     echo
 
     # Declare array to store all found models
@@ -1612,6 +2163,7 @@ loop_test_all_models() {
     if [[ "$run_in_background" != "true" ]]; then
         log_message "Summary - Total: $total_models, Successful: $successful_tests, Failed: $failed_tests"
     fi
+    generate_performance_report "$performance_dir" "$total_models" "$successful_tests" "$failed_tests"
     wait_return
 }
 
