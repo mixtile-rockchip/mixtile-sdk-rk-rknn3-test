@@ -1439,17 +1439,18 @@ loop_test_all_models() {
     fi
 
     # Ask for execution mode
-    echo
-    echo -e "${CYAN}Select execution mode:${NC}"
-    echo "1. Sequential execution (one after another)"
-    echo "2. Background execution (all tests run concurrently)"
-    read -rp "Please select execution mode (1-2): " exec_mode
+    # echo
+    # echo -e "${CYAN}Select execution mode:${NC}"
+    # echo "1. Sequential execution (one after another)"
+    # echo "2. Background execution (all tests run concurrently)"
+    # read -rp "Please select execution mode (1-2): " exec_mode
 
+    # local run_in_background="false"
+    # if [[ "$exec_mode" == "2" ]]; then
+    #     run_in_background="true"
+    #     echo -e "${YELLOW}All tests will run concurrently in background.${NC}"
+    # fi
     local run_in_background="false"
-    if [[ "$exec_mode" == "2" ]]; then
-        run_in_background="true"
-        echo -e "${YELLOW}All tests will run concurrently in background.${NC}"
-    fi
 
     # Confirm test execution
     echo
@@ -1706,17 +1707,18 @@ generate_test_menu() {
                     echo -e "${BLUE}Model path: $model_path${NC}"
 
                     # Ask for execution mode
-                    echo
-                    echo -e "${CYAN}Select execution mode:${NC}"
-                    echo "1. Run in foreground (wait for completion)"
-                    echo "2. Run in background (continue using menu)"
-                    read -rp "Please select execution mode (1-2): " exec_choice
+                    # echo
+                    # echo -e "${CYAN}Select execution mode:${NC}"
+                    # echo "1. Run in foreground (wait for completion)"
+                    # echo "2. Run in background (continue using menu)"
+                    # read -rp "Please select execution mode (1-2): " exec_choice
 
-                    if [[ "$exec_choice" == "2" ]]; then
-                        test_model "$model_name" "$menu_type" "$model_path" "true"
-                    else
-                        test_model "$model_name" "$menu_type" "$model_path" "false"
-                    fi
+                    # if [[ "$exec_choice" == "2" ]]; then
+                    #     test_model "$model_name" "$menu_type" "$model_path" "true"
+                    # else
+                    #     test_model "$model_name" "$menu_type" "$model_path" "false"
+                    # fi
+                    test_model "$model_name" "$menu_type" "$model_path" "false"
                     break
                 fi
             done
