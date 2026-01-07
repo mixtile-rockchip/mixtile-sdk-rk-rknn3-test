@@ -293,18 +293,45 @@ reboot_test() {
         return 1
     fi
 
-    # Get number of loops
-    read -p "Enter number of reboot loops (1-100): " loop_count
-    if [[ ! "$loop_count" =~ ^[1-9][0-9]*$ ]] || [[ "$loop_count" -lt 1 ]] || [[ "$loop_count" -gt 100 ]]; then
-        echo -e "${RED}Invalid input, using default: 1${NC}"
-        loop_count=1
-    fi
+    # Get number of loops - 修改为支持0表示无限循环
+    while true; do
+        read -p "Enter number of reboot loops (0=infinite, 1-100): " loop_count
+        if [[ -z "$loop_count" ]]; then
+            echo -e "${RED}Error: Input cannot be empty, please re-enter!${NC}"
+            continue
+        fi
 
-    echo -e "${YELLOW}Reboot test will run $loop_count times${NC}"
+        if [[ ! "$loop_count" =~ ^[0-9]+$ ]]; then
+            echo -e "${RED}Error: Please enter a valid non-negative integer!${NC}"
+            continue
+        fi
+
+        loop_count=$((10#$loop_count))
+
+        if [[ "$loop_count" -eq 0 ]]; then
+            echo -e "${YELLOW}Infinite loop mode selected${NC}"
+            break
+        elif [[ "$loop_count" -ge 1 && "$loop_count" -le 100 ]]; then
+            break
+        else
+            echo -e "${RED}Error: Please enter 0 for infinite loops or a number between 1-100!${NC}"
+        fi
+    done
+
+    if [[ "$loop_count" -eq 0 ]]; then
+        echo -e "${YELLOW}Reboot test will run indefinitely until manually stopped${NC}"
+    else
+        echo -e "${YELLOW}Reboot test will run $loop_count times${NC}"
+    fi
     echo
 
     # Confirm test execution
-    echo -e "${RED}WARNING: This will reboot the RKNN device $loop_count times.${NC}"
+    if [[ "$loop_count" -eq 0 ]]; then
+        echo -e "${RED}WARNING: This will reboot the RKNN device indefinitely until manually stopped!${NC}"
+    else
+        echo -e "${RED}WARNING: This will reboot the RKNN device $loop_count times.${NC}"
+    fi
+
     read -p "Continue? (y/n): " confirm_choice
 
     if [[ "$confirm_choice" != "y" ]] && [[ "$confirm_choice" != "Y" ]]; then
@@ -314,12 +341,29 @@ reboot_test() {
 
     local successful_reboots=0
     local failed_reboots=0
+    local current_iteration=0
 
     echo -e "${GREEN}Starting reboot test sequence...${NC}"
+    echo -e "${YELLOW}Press Ctrl+C to stop the test at any time${NC}"
     echo
 
-    for ((i=1; i<=loop_count; i++)); do
-        echo -e "${BLUE}=== Reboot Test Iteration $i of $loop_count ===${NC}"
+    # 设置信号捕获，允许用户通过Ctrl+C中断测试
+    trap 'echo -e "\n${YELLOW}Test interrupted by user${NC}"; break' INT
+
+    # 主循环
+    while true; do
+        ((current_iteration++))
+
+        # 如果不是无限循环模式，检查是否达到指定次数
+        if [[ "$loop_count" -ne 0 ]] && [[ $current_iteration -gt $loop_count ]]; then
+            break
+        fi
+
+        if [[ "$loop_count" -eq 0 ]]; then
+            echo -e "${BLUE}=== Reboot Test Iteration $current_iteration (Infinite Mode) ===${NC}"
+        else
+            echo -e "${BLUE}=== Reboot Test Iteration $current_iteration of $loop_count ===${NC}"
+        fi
 
         # The background program of npu needs to be closed first
         pkill -f "rknn3_transfer_proxy"
@@ -343,26 +387,40 @@ reboot_test() {
         version_output=$(rknn-smi --version 2>/dev/null)
 
         if echo "$version_output" | grep -q "rknn-smi version"; then
-            echo -e "${GREEN}Reboot iteration $i completed successfully${NC}"
+            echo -e "${GREEN}Reboot iteration $current_iteration completed successfully${NC}"
             ((successful_reboots++))
         else
-            echo -e "${RED}Reboot iteration $i failed${NC}"
+            echo -e "${RED}Reboot iteration $current_iteration failed${NC}"
             ((failed_reboots++))
         fi
 
-        # Add separator between iterations
-        if [[ $i -lt $loop_count ]]; then
+        # 如果不是无限循环模式，在最后一次迭代后不显示准备信息
+        if [[ "$loop_count" -eq 0 ]] || [[ $current_iteration -lt $loop_count ]]; then
             echo
-            echo -e "${YELLOW}Preparing for next iteration...${NC}"
+            if [[ "$loop_count" -eq 0 ]]; then
+                echo -e "${YELLOW}Infinite loop mode - Press Ctrl+C to stop, continuing in 2 seconds...${NC}"
+            else
+                echo -e "${YELLOW}Preparing for next iteration...${NC}"
+            fi
             sleep 2
             echo
         fi
     done
 
+    # 重置信号捕获
+    trap - INT
+
     # Display test summary
     echo
     echo -e "${CYAN}=== Reboot Test Summary ===${NC}"
-    echo -e "Total iterations: $loop_count"
+
+    if [[ "$loop_count" -eq 0 ]]; then
+        echo -e "Test mode: Infinite (manually stopped)"
+    else
+        echo -e "Total iterations: $loop_count"
+    fi
+
+    echo -e "Completed iterations: $((current_iteration - 1))"
     echo -e "${GREEN}Successful reboots: $successful_reboots${NC}"
 
     if [[ $failed_reboots -gt 0 ]]; then

@@ -24,6 +24,7 @@ DEVICES_ID=1
 DEVICES_CORE=0xff
 SEQ_LEN=512
 NEW_TOKENS=512
+TEST_DURATION=0
 
 # ============================================================================
 # Core utility functions
@@ -155,6 +156,10 @@ validate_hex_input() {
 
 get_loop() {
     validate_number_input "Enter number of loops (1-100000): " "LOOP" 1 100000
+}
+
+get_test_duration() {
+    validate_number_input "Enter test duration in hours: " "TEST_DURATION" 0 999999
 }
 
 get_devices_id() {
@@ -292,6 +297,7 @@ test_model() {
     echo "Executing ${model_name} model test in foreground..."
 
     get_loop
+    get_test_duration
     get_devices_id
     get_devices_core
     echo "Number of loops: $LOOP"
@@ -362,7 +368,8 @@ test_model_with_params() {
     local devices_core="$6"
     local seq_len="$7"
     local new_tokens="$8"
-    local log_file="$9"
+    local test_duration="$9"
+    local log_file="${10}"
 
     show_test_start "$model_type" "$model_name" "$log_file"
     echo "Executing ${model_name} model test with parameters:"
@@ -378,21 +385,21 @@ test_model_with_params() {
     case "$model_type" in
         "llm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_llm_test.sh $model_path/$model_name $seq_len $new_tokens 0 $loop_count $devices_id $devices_core${NC}"
+            echo -e "${GREEN}./rknn3_llm_test.sh $model_path/$model_name $seq_len $new_tokens $test_duration $loop_count $devices_id $devices_core${NC}"
             echo
-            ./rknn3_llm_test.sh $model_path/$model_name $seq_len $new_tokens 0 $loop_count $devices_id $devices_core
+            ./rknn3_llm_test.sh $model_path/$model_name $seq_len $new_tokens $test_duration $loop_count $devices_id $devices_core
             ;;
         "cnn")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path/$model_name 0 $loop_count $devices_id $devices_core${NC}"
+            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core${NC}"
             echo
-            ./rknn3_cnn_test.sh $model_path/$model_name 0 $loop_count $devices_id $devices_core
+            ./rknn3_cnn_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core
             ;;
         "vlm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path/$model_name 0 $loop_count $devices_id $devices_core${NC}"
+            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core${NC}"
             echo
-            ./rknn3_vlm_test.sh $model_path/$model_name 0 $loop_count $devices_id $devices_core
+            ./rknn3_vlm_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core
             ;;
         *)
             echo -e "${RED}Unknown model type: $model_type${NC}"
@@ -946,6 +953,7 @@ loop_test_all_models() {
 
     echo -e "${CYAN}Setting test parameters for all models:${NC}"
     get_loop
+    get_test_duration
     get_devices_id
     echo "Note: Device core will be set automatically based on model type (0x01 for CNN, 0xff for LLM/VLM)"
 
@@ -1028,9 +1036,9 @@ loop_test_all_models() {
 
         local test_result
         if [[ "$model_type" == "llm" ]]; then
-            test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "$llm_seq_len" "$llm_new_tokens" "$log_file"
+            test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "$llm_seq_len" "$llm_new_tokens" "$TEST_DURATION" "$log_file"
         else
-            test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "512" "512" "$log_file"
+            test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "512" "512" "$TEST_DURATION" "$log_file"
         fi
 
         test_result=$?
