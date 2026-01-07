@@ -7,6 +7,7 @@ BIN_LIST=(
     rknn3_cnn_demo
     rknn3_llm_demo
     rknn3_vlm_demo
+    rknn3_audio_encoder_test
 )
 
 for bin in "${BIN_LIST[@]}"; do

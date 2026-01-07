@@ -10,8 +10,8 @@ ENABLE_ASAN=OFF
 DISABLE_RGA=OFF
 DISABLE_LIBJPEG=OFF
 
-# 只要执行该脚本，就同时编译这三个
-DEMO_LIST=("rknn3_cnn_test" "rknn3_llm_test" "rknn3_vlm_test")
+# Only compile these tests when executing this script
+DEMO_LIST=("rknn3_cnn_test" "rknn3_llm_test" "rknn3_vlm_test" "rknn3_audio_encoder_test")
 
 echo "$0 $@"
 while getopts ":t:a:b:m:r:j:g:" opt; do
