@@ -14,7 +14,7 @@ DISABLE_LIBJPEG=OFF
 DEMO_LIST=("rknn3_cnn_test" "rknn3_llm_test" "rknn3_vlm_test")
 
 echo "$0 $@"
-while getopts ":t:a:b:m:r:j" opt; do
+while getopts ":t:a:b:m:r:j:g:" opt; do
   case $opt in
     t) TARGET_SOC=$OPTARG ;;
     a) TARGET_ARCH=$OPTARG ;;
@@ -22,6 +22,7 @@ while getopts ":t:a:b:m:r:j" opt; do
     m) ENABLE_ASAN=ON; export ENABLE_ASAN=TRUE ;;
     r) DISABLE_RGA=ON ;;
     j) DISABLE_LIBJPEG=ON ;;
+    g) GCC_COMPILER=$OPTARG ;;
     ?) echo "Invalid option: -$OPTARG"; exit 1 ;;
   esac
 done
@@ -39,12 +40,18 @@ if [ "${TARGET_SOC}" = "x86" ]; then
     TARGET_PLATFORM="x86_64"
     DISABLE_RGA=ON
 else
+    # Use parameter GCC_COMPILER if provided, otherwise use environment variable
+    if [ -z "$GCC_COMPILER" ]; then
+        echo "❌ 未指定编译器: 请使用 -g 参数或 export GCC_COMPILER"
+        exit 1
+    fi
+
     export CC=${GCC_COMPILER}-gcc
     export CXX=${GCC_COMPILER}-g++
     TARGET_PLATFORM=${TARGET_SOC}_linux_${TARGET_ARCH}
-    
+
     if ! command -v ${CC} >/dev/null 2>&1; then
-        echo "❌ 未找到编译器: ${CC}, 请先 export GCC_COMPILER"
+        echo "❌ 未找到编译器: ${CC}"
         exit 1
     fi
 fi
@@ -67,7 +74,7 @@ mkdir -p "${FINAL_INSTALL_DIR}"
 for DEMO_NAME in "${DEMO_LIST[@]}"
 do
     echo ">>>> 正在处理: ${DEMO_NAME} ...."
-    
+
     # 自动寻找路径 (匹配你的目录结构)
     BUILD_DEMO_PATH=""
     for search_path in "rknn3_stress_test" "tested_models" "examples"; do
@@ -85,9 +92,9 @@ do
     # 为每个 Demo 创建独立的 build 目录
     CURRENT_BUILD_DIR=${ROOT_PWD}/build/build_${DEMO_NAME}_${TARGET_PLATFORM}
     mkdir -p "${CURRENT_BUILD_DIR}"
-    
+
     cd "${CURRENT_BUILD_DIR}"
-    
+
     # 执行 CMake
     # 注意：CMAKE_INSTALL_PREFIX 指向总目录下的子文件夹
     cmake ../../${BUILD_DEMO_PATH} \
