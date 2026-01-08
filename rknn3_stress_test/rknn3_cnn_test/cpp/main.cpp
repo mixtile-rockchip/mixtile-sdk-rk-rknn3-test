@@ -131,7 +131,7 @@ int main(int argc, char **argv)
         return -1;
         // goto out;
     }
-    
+
 out:
     ret = release_common_img(&rknn_app_ctx);
     if (ret != 0)
@@ -152,7 +152,7 @@ out:
     // }
 
     // if(ret == 0) {
-        
+
     // } else {
     //     printf("[rknn3_model_stress_test_error] \n");
     // }

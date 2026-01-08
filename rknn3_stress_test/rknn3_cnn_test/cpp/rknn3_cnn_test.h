@@ -40,4 +40,4 @@ int init_common_img(rknn_common_img_ctx* vision_ctx, const char* model_path, con
 int release_common_img(rknn_common_img_ctx* vision_ctx);
 int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,uint32_t loop,float time_loop);
 
-#endif 
+#endif

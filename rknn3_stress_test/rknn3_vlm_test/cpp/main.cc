@@ -453,13 +453,12 @@ int main(int argc, char **argv) {
             }
         }
         printf("\n===== RKNN3_VLM_TEST Results Summary =====\n\n");
-        printf("RK1820 deviceID: %s\n",rknn_app_ctx.llm.device_mac);
-        printf("RKNN3 Model: %s\n",model_name);
-        printf("%s Total time: %12.3f (ms)\n",model_name,infer_cost_time.get_time());
-        printf("%s Total runs: %d\n",model_name,infer_loop_cnt);
+        printf("Model: %s\n",model_name);
+        printf("DeviceID: %s\n",rknn_app_ctx.llm.device_mac);
+        printf("TotalTime: %.3f ms\n",infer_cost_time.get_time());
+        printf("TotalRuns: %d\n",infer_loop_cnt);
         printf("\n=================================\n");
-
-
+        printf("[rknn3_model_stress_test_done]\n");
     }
 
 
