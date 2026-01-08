@@ -370,12 +370,14 @@ test_model_with_params() {
     local new_tokens="$8"
     local test_duration="$9"
     local log_file="${10}"
+    local generate_report="${11:-0}"  # 添加第11个参数，默认为0
 
     show_test_start "$model_type" "$model_name" "$log_file"
     echo "Executing ${model_name} model test with parameters:"
     echo "Number of loops: $loop_count"
     echo "Device ID: $devices_id"
     echo "Device core: $devices_core"
+    echo "Generate performance report: $generate_report"
 
     if [[ "$model_type" == "llm" ]]; then
         echo "Sequence length (seq_len): $seq_len"
@@ -385,21 +387,21 @@ test_model_with_params() {
     case "$model_type" in
         "llm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_llm_test.sh $model_path/$model_name $seq_len $new_tokens $test_duration $loop_count $devices_id $devices_core${NC}"
+            echo -e "${GREEN}./rknn3_llm_test.sh $model_path/$model_name $seq_len $new_tokens $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
             echo
-            ./rknn3_llm_test.sh $model_path/$model_name $seq_len $new_tokens $test_duration $loop_count $devices_id $devices_core
+            ./rknn3_llm_test.sh "$model_path/$model_name" "$seq_len" "$new_tokens" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
             ;;
         "cnn")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core${NC}"
+            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
             echo
-            ./rknn3_cnn_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core
+            ./rknn3_cnn_test.sh "$model_path/$model_name" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
             ;;
         "vlm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core${NC}"
+            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
             echo
-            ./rknn3_vlm_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core
+            ./rknn3_vlm_test.sh "$model_path/$model_name" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
             ;;
         *)
             echo -e "${RED}Unknown model type: $model_type${NC}"
@@ -412,13 +414,13 @@ test_model_with_params() {
     if [ $test_result -eq 0 ]; then
         show_test_result 0 "$model_name" "$log_file"
         if [[ "$model_type" == "llm" ]]; then
-            log_message "$model_name test completed - Loops: $loop_count, Device ID: $devices_id, Device Core: $devices_core, Seq Len: $seq_len, New Tokens: $new_tokens" "$log_file"
+            log_message "$model_name test completed - Loops: $loop_count, Device ID: $devices_id, Device Core: $devices_core, Seq Len: $seq_len, New Tokens: $new_tokens, Generate Report: $generate_report" "$log_file"
         else
-            log_message "$model_name test completed - Loops: $loop_count, Device ID: $devices_id, Device Core: $devices_core" "$log_file"
+            log_message "$model_name test completed - Loops: $loop_count, Device ID: $devices_id, Device Core: $devices_core, Generate Report: $generate_report" "$log_file"
         fi
     else
         show_test_result 1 "$model_name" "$log_file"
-        log_message "$model_name test failed - Exit code: $test_result" "$log_file"
+        log_message "$model_name test failed - Exit code: $test_result, Generate Report: $generate_report" "$log_file"
     fi
 
     return $test_result
@@ -521,10 +523,12 @@ analyze_llm_performance() {
             print "Tokens Per Second (TPS): " tps
             print "Total Time: " total_time
             print "Total Runs: " total_runs
+            print "Average Memory Usage: " avg_memory
+            print "Average NPU Utilization: " avg_npu
             print "------------------------------------------------"
         }
         model = ""; core = ""; seq_len = ""; token = ""; ttft = ""; tpot = ""
-        prefill = ""; tps = ""; total_time = ""; total_runs = ""
+        prefill = ""; tps = ""; total_time = ""; total_runs = ""; avg_memory = ""; avg_npu = ""
     }
     /^model:/ { model = $2 }
     /^core:/ { core = $2 }
@@ -536,6 +540,8 @@ analyze_llm_performance() {
     /^TPS:/ { tps = $2 " " $3 " " $4 }
     /^TotalTime:/ { total_time = $2 " " $3 " " $4 }
     /^TotalRuns:/ { total_runs = $2 }
+    /^AvgMemoryUsage:/ { avg_memory = $2 " " $3 " " $4 " " $5 }
+    /^AvgNpuUtilization:/ { avg_npu = $2 " " $3 }
     END {
         if (model != "") {
             print "Model: " model
@@ -548,6 +554,8 @@ analyze_llm_performance() {
             print "Tokens Per Second (TPS): " tps
             print "Total Time: " total_time
             print "Total Runs: " total_runs
+            print "Average Memory Usage: " avg_memory
+            print "Average NPU Utilization: " avg_npu
             print "------------------------------------------------"
         }
     }
@@ -575,11 +583,19 @@ analyze_llm_performance() {
         else print "N/A";
     }' "$llm_log" 2>/dev/null)
 
+    # 添加内存和NPU利用率统计
+    local avg_memory=$(awk '/^AvgMemoryUsage:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count}' "$llm_log" 2>/dev/null)
+    local avg_npu=$(awk '/^AvgNpuUtilization:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count}' "$llm_log" 2>/dev/null)
+
     echo
     echo "Performance Statistics:"
     echo "Average TTFT: ${avg_ttft} ms"
     echo "Average TPS: ${avg_tps} tokens/s"
     echo "Maximum TPS: ${max_tps} tokens/s (Model: ${best_model})"
+    echo "Average Memory Usage: ${avg_memory} MB"
+    echo "Average NPU Utilization: ${avg_npu}%"
+    echo "Maximum Memory Usage: ${max_memory} MB"
+    echo "Maximum NPU Utilization: ${max_npu}%"
 }
 
 analyze_vlm_performance() {
@@ -609,10 +625,12 @@ analyze_vlm_performance() {
             print "Tokens Per Second (TPS): " tps
             print "Total Time: " total_time
             print "Total Runs: " total_runs
+            print "Average Memory Usage: " avg_memory
+            print "Average NPU Utilization: " avg_npu
             print "------------------------------------------------"
         }
         model = ""; core = ""; input_width = ""; input_height = ""; vision = ""
-        gen_len = ""; ttft = ""; tps = ""; total_time = ""; total_runs = ""
+        gen_len = ""; ttft = ""; tps = ""; total_time = ""; total_runs = ""; avg_memory = ""; avg_npu = ""
     }
     /^model:/ { model = $2 }
     /^core:/ { core = $2 }
@@ -624,6 +642,8 @@ analyze_vlm_performance() {
     /^TPS:/ { tps = $2 " " $3 " " $4 }
     /^TotalTime:/ { total_time = $2 " " $3 " " $4 }
     /^TotalRuns:/ { total_runs = $2 }
+    /^AvgMemoryUsage:/ { avg_memory = $2 " " $3 " " $4 " " $5 }
+    /^AvgNpuUtilization:/ { avg_npu = $2 " " $3 }
     END {
         if (model != "") {
             print "Model: " model
@@ -635,6 +655,8 @@ analyze_vlm_performance() {
             print "Tokens Per Second (TPS): " tps
             print "Total Time: " total_time
             print "Total Runs: " total_runs
+            print "Average Memory Usage: " avg_memory
+            print "Average NPU Utilization: " avg_npu
             print "------------------------------------------------"
         }
     }
@@ -662,11 +684,19 @@ analyze_vlm_performance() {
         else print "N/A";
     }' "$vlm_log" 2>/dev/null)
 
+    # 添加内存和NPU利用率统计
+    local avg_memory=$(awk '/^AvgMemoryUsage:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count}' "$vlm_log" 2>/dev/null)
+    local avg_npu=$(awk '/^AvgNpuUtilization:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count}' "$vlm_log" 2>/dev/null)
+
     echo
     echo "Performance Statistics:"
     echo "Average TTFT: ${avg_ttft} ms"
     echo "Average TPS: ${avg_tps} tokens/s"
     echo "Maximum TPS: ${max_tps} tokens/s (Model: ${best_model})"
+    echo "Average Memory Usage: ${avg_memory} MB"
+    echo "Average NPU Utilization: ${avg_npu}%"
+    echo "Maximum Memory Usage: ${max_memory} MB"
+    echo "Maximum NPU Utilization: ${max_npu}%"
 }
 
 generate_performance_comparison() {
@@ -710,15 +740,41 @@ generate_performance_comparison() {
     fi
 
     if [[ $llm_count -gt 0 ]]; then
-        local best_llm_tps=$(awk 'BEGIN{max=0} /^TPS:/ {gsub(/[^0-9.]/, "", $2); if ($2 > max) max = $2} END {print max+0}' "$performance_dir/llm.log" 2>/dev/null || echo "N/A")
+        local best_llm_tps=$(awk 'BEGIN{max=0} /^TPS:/ {gsub(/[^0-9.]/, "", $2); if ($2 > max) max = $2} END {if (max>0) printf "%.2f", max}' "$performance_dir/llm.log" 2>/dev/null || echo "N/A")
         local best_llm_model=$(awk '/^TPS:/ {gsub(/[^0-9.]/, "", $2); tps=$2} /^model:/ {model=$2} {if (tps == '"$best_llm_tps"') {print model; exit}}' "$performance_dir/llm.log" 2>/dev/null || echo "N/A")
+        local best_llm_memory=$(awk '/^model:/ {model=$2} /^AvgMemoryUsage:/ {gsub(/[^0-9.]/, "", $2); memory=$2} {if (model == "'"$best_llm_model"'") {print memory; exit}}' "$performance_dir/llm.log" 2>/dev/null || echo "N/A")
+        local best_llm_npu=$(awk '/^model:/ {model=$2} /^AvgNpuUtilization:/ {gsub(/[^0-9.]/, "", $2); npu=$2} {if (model == "'"$best_llm_model"'") {print npu; exit}}' "$performance_dir/llm.log" 2>/dev/null || echo "N/A")
         echo "LLM Highest TPS: $best_llm_tps tokens/s (Model: $best_llm_model)"
+        echo "  - Memory Usage: $best_llm_memory MB"
+        echo "  - NPU Utilization: $best_llm_npu%"
     fi
 
     if [[ $vlm_count -gt 0 ]]; then
-        local best_vlm_tps=$(awk 'BEGIN{max=0} /^TPS:/ {gsub(/[^0-9.]/, "", $2); if ($2 > max) max = $2} END {print max+0}' "$performance_dir/vlm.log" 2>/dev/null || echo "N/A")
+        local best_vlm_tps=$(awk 'BEGIN{max=0} /^TPS:/ {gsub(/[^0-9.]/, "", $2); if ($2 > max) max = $2} END {if (max>0) printf "%.2f", max}' "$performance_dir/vlm.log" 2>/dev/null || echo "N/A")
         local best_vlm_model=$(awk '/^TPS:/ {gsub(/[^0-9.]/, "", $2); tps=$2} /^model:/ {model=$2} {if (tps == '"$best_vlm_tps"') {print model; exit}}' "$performance_dir/vlm.log" 2>/dev/null || echo "N/A")
+        local best_vlm_memory=$(awk '/^model:/ {model=$2} /^AvgMemoryUsage:/ {gsub(/[^0-9.]/, "", $2); memory=$2} {if (model == "'"$best_vlm_model"'") {print memory; exit}}' "$performance_dir/vlm.log" 2>/dev/null || echo "N/A")
+        local best_vlm_npu=$(awk '/^model:/ {model=$2} /^AvgNpuUtilization:/ {gsub(/[^0-9.]/, "", $2); npu=$2} {if (model == "'"$best_vlm_model"'") {print npu; exit}}' "$performance_dir/vlm.log" 2>/dev/null || echo "N/A")
         echo "VLM Highest TPS: $best_vlm_tps tokens/s (Model: $best_vlm_model)"
+        echo "  - Memory Usage: $best_vlm_memory MB"
+        echo "  - NPU Utilization: $best_vlm_npu%"
+    fi
+
+    echo
+    echo "Resource Usage Comparison:"
+    echo "------------------------------------------------"
+
+    if [[ $llm_count -gt 0 ]]; then
+        local avg_llm_memory=$(awk '/^AvgMemoryUsage:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count}' "$performance_dir/llm.log" 2>/dev/null || echo "N/A")
+        local avg_llm_npu=$(awk '/^AvgNpuUtilization:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count}' "$performance_dir/llm.log" 2>/dev/null || echo "N/A")
+        echo "LLM Average Memory Usage: ${avg_llm_memory} MB"
+        echo "LLM Average NPU Utilization: ${avg_llm_npu}%"
+    fi
+
+    if [[ $vlm_count -gt 0 ]]; then
+        local avg_vlm_memory=$(awk '/^AvgMemoryUsage:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count}' "$performance_dir/vlm.log" 2>/dev/null || echo "N/A")
+        local avg_vlm_npu=$(awk '/^AvgNpuUtilization:/ {gsub(/[^0-9.]/, "", $2); sum += $2; count++} END {if (count>0) printf "%.2f", sum/count}' "$performance_dir/vlm.log" 2>/dev/null || echo "N/A")
+        echo "VLM Average Memory Usage: ${avg_vlm_memory} MB"
+        echo "VLM Average NPU Utilization: ${avg_vlm_npu}%"
     fi
 
     echo
@@ -977,15 +1033,30 @@ loop_test_all_models() {
         llm_new_tokens="$NEW_TOKENS"
     fi
 
+    # 在开始测试前询问是否生成性能报告
+    local generate_report=false
+    echo
+    echo -e "${CYAN}Performance Report Configuration:${NC}"
+    read -p "Do you want to generate a performance report after testing all models? (y/n, default: y): " generate_choice
+
+    if [[ -z "$generate_choice" ]] || [[ "$generate_choice" =~ ^[Yy]$ ]] || [[ "$generate_choice" =~ ^[Yy][Ee][Ss]$ ]]; then
+        generate_report=true
+        echo -e "${GREEN}Performance report will be generated after testing all models${NC}"
+    else
+        echo -e "${YELLOW}Performance report generation disabled${NC}"
+    fi
+
     echo
     echo -e "${RED}WARNING: This will test all ${#all_models[@]} models with the following parameters:${NC}"
     echo "Loops: $LOOP"
+    echo "Test duration: $TEST_DURATION hours"
     echo "Device ID: $DEVICES_ID"
-    echo "Device Core: Auto-set (0x01 for CNN, 0xff for LLM/VLM)"
+    echo "Device core: Auto-set (0x01 for CNN, 0xff for LLM/VLM)"
     if [[ "$has_llm" == true ]]; then
-        echo "LLM Sequence Length: $llm_seq_len"
-        echo "LLM New Tokens: $llm_new_tokens"
+        echo "LLM Sequence length: $llm_seq_len"
+        echo "LLM New tokens: $llm_new_tokens"
     fi
+    echo "Generate performance report: $generate_report"
 
     echo
     echo -e "${YELLOW}This may take a significant amount of time. Continue?${NC}"
@@ -1003,6 +1074,7 @@ loop_test_all_models() {
     echo
     echo -e "${GREEN}Starting loop testing of all models...${NC}"
     log_message "=== Starting loop testing of all models ===" "$log_file"
+    log_message "Performance report generation: $generate_report" "$log_file"
 
     local total_models=${#all_models[@]}
     local current_model=0
@@ -1034,18 +1106,16 @@ loop_test_all_models() {
             continue
         fi
 
-        local test_result
-        if [[ "$model_type" == "llm" ]]; then
-            test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "$llm_seq_len" "$llm_new_tokens" "$TEST_DURATION" "$log_file"
-        else
-            test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "512" "512" "$TEST_DURATION" "$log_file"
+        local report_flag=0
+        if [[ "$generate_report" == true ]]; then
+            report_flag=1
         fi
 
-        test_result=$?
-        if [ $test_result -eq 0 ]; then
-            ((successful_tests++))
+        local test_result
+        if [[ "$model_type" == "llm" ]]; then
+            test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "$llm_seq_len" "$llm_new_tokens" "$TEST_DURATION" "$log_file" "$report_flag"
         else
-            ((failed_tests++))
+            test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "512" "512" "$TEST_DURATION" "$log_file" "$report_flag"
         fi
 
         sleep 2
@@ -1067,7 +1137,18 @@ loop_test_all_models() {
 
     log_message "=== Loop testing completed ===" "$log_file"
     log_message "Summary - Total: $total_models, Successful: $successful_tests, Failed: $failed_tests" "$log_file"
-    generate_performance_report "$performance_dir" "$total_models" "$successful_tests" "$failed_tests"
+
+    # 根据用户选择决定是否生成性能报告
+    if [[ "$generate_report" == true ]]; then
+        echo
+        echo -e "${CYAN}Generating performance report...${NC}"
+        generate_performance_report "$performance_dir" "$total_models" "$successful_tests" "$failed_tests"
+    else
+        echo
+        echo -e "${YELLOW}Skipping performance report generation as requested by user${NC}"
+        log_message "Performance report generation skipped by user" "$log_file"
+    fi
+
     wait_return
 }
 
