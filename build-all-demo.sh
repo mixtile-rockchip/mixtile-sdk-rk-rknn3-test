@@ -58,7 +58,7 @@ fi
 
 ROOT_PWD=$( cd "$( dirname $0 )" && pwd )
 # 修改安装根目录：汇总到同一个 install/平台名 下
-FINAL_INSTALL_DIR=${ROOT_PWD}/install/${TARGET_PLATFORM}_rk1820_stress_test
+FINAL_INSTALL_DIR=${ROOT_PWD}/install/aicp_test_${TARGET_ARCH}
 
 echo "==========================================="
 echo "开始批量编译: ${DEMO_LIST[*]}"
