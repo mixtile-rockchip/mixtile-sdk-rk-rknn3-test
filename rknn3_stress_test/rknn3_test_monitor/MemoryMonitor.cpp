@@ -147,6 +147,9 @@ void MemoryMonitor::reset_statistics() {
                 dev_stats.max_ddr_freq = 0;
                 dev_stats.min_ddr_freq = std::numeric_limits<uint16_t>::max();
                 dev_stats.avg_ddr_freq = 0;
+                dev_stats.peak_npu_util = 0;
+                dev_stats.min_npu_util = 100;
+                dev_stats.avg_npu_util = 0;
                 dev_stats.sample_count = 0;
                 dev_stats.start_timestamp_us = start_time;
                 dev_stats.end_timestamp_us = start_time;
@@ -199,6 +202,9 @@ DeviceMemoryStats* MemoryMonitor::find_or_create_device_stats(uint16_t device_id
     new_stats.min_free_memory = std::numeric_limits<uint64_t>::max();
     new_stats.max_free_memory = 0;
     new_stats.min_ddr_freq = std::numeric_limits<uint16_t>::max();
+    new_stats.peak_npu_util = 0;
+    new_stats.min_npu_util = 100;
+    new_stats.avg_npu_util = 0;
     new_stats.start_timestamp_us = get_current_timestamp_us();
 
     statistics_.devices.push_back(new_stats);
@@ -248,12 +254,21 @@ void MemoryMonitor::update_statistics(const std::vector<MemoryInfo>& current_dat
             dev_stats->min_ddr_freq = info.ddr_freq;
         }
 
+        // Update NPU utilization statistics
+        if (info.npu_util_rate > dev_stats->peak_npu_util) {
+            dev_stats->peak_npu_util = info.npu_util_rate;
+        }
+        if (info.npu_util_rate < dev_stats->min_npu_util) {
+            dev_stats->min_npu_util = info.npu_util_rate;
+        }
+
         // Accumulate for average calculation (using incremental average to avoid overflow)
         uint32_t n = dev_stats->sample_count;
         dev_stats->avg_used_memory = (dev_stats->avg_used_memory * n + info.used_memory) / (n + 1);
         dev_stats->avg_free_memory = (dev_stats->avg_free_memory * n + info.free_memory) / (n + 1);
         dev_stats->avg_usage_percent = (dev_stats->avg_usage_percent * n + info.usage_percent) / (n + 1);
         dev_stats->avg_ddr_freq = (dev_stats->avg_ddr_freq * n + info.ddr_freq) / (n + 1);
+        dev_stats->avg_npu_util = (dev_stats->avg_npu_util * n + info.npu_util_rate) / (n + 1);
 
         // Increment sample count
         dev_stats->sample_count++;
@@ -286,6 +301,13 @@ void MemoryMonitor::monitor_memory_once() {
                 uint64_t used_memory = memory_info.total_size - memory_info.free_size;
                 float memory_usage_percent = (float)used_memory * 100.0f / (float)memory_info.total_size;
 
+                // Get NPU utilization
+                struct nsmi_npu_info npu_info = {0};
+                uint16_t npu_util = 0;
+                if (rknnsmi_get_npu_info(device_id, chip_list[j], &npu_info) == RKNNSMI_SUCCESS) {
+                    npu_util = npu_info.util_rate;
+                }
+
                 MemoryInfo info = {
                     device_id,
                     chip_list[j],
@@ -294,6 +316,7 @@ void MemoryMonitor::monitor_memory_once() {
                     memory_info.free_size,
                     memory_usage_percent,
                     memory_info.cur_freq,
+                    npu_util,
                     timestamp
                 };
 

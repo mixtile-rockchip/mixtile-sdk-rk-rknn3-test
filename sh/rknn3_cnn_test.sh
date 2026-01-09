@@ -114,6 +114,7 @@ device_memory=""
 avg_memory=""
 min_memory=""
 max_memory=""
+npu_util=""
 
 echo ""
 echo "--- Device ${DEVICE_ID} Statistics ---"
@@ -151,6 +152,7 @@ for log in "${log_files[@]}"; do
     avg_memory=$(grep '^AvgMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
     min_memory=$(grep '^MinMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
     max_memory=$(grep '^MaxMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+    npu_util=$(grep '^NpuUtilization:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
     tot_time=$(echo "$fps_line" | awk -F'tot_time:' '{print $2}' | awk -F',' '{print $1}')
     avg_cost=$(echo "$fps_line" | awk -F'avgCost:' '{print $NF}' | awk '{print $1}')
 
@@ -183,10 +185,10 @@ echo "  [$model_name] Total frames: $total_frames"
 echo "  [$model_name] Total time: $tot_time ms"
 echo "  [$model_name] Average cost: $avg_cost ms"
 echo "  [$model_name] Total FPS: $total_fps"
-echo "  [$model_name] Device Memory: $device_memory"
-echo "  [$model_name] Avg Memory Usage: $avg_memory"
-echo "  [$model_name] Min Memory Usage: $min_memory"
-echo "  [$model_name] Max Memory Usage: $max_memory"
+# echo "  [$model_name] Device Memory: $device_memory"
+# echo "  [$model_name] Avg Memory Usage: $avg_memory"
+# echo "  [$model_name] Min Memory Usage: $min_memory"
+# echo "  [$model_name] Max Memory Usage: $max_memory"
 
 if [ $error_found -eq 0 ]; then
     echo "  Status: [PASS]"
@@ -219,12 +221,13 @@ total_frames: ${total_frames}
 total_time: ${tot_time} ms
 fps: ${total_fps}
 avg_cost: ${avg_cost} ms
-DeviceMemory: ${device_memory}
-AvgMemoryUsage: ${avg_memory}
-MinMemoryUsage: ${min_memory}
-MaxMemoryUsage: ${max_memory}
 EOF
 )
+# DeviceMemory: ${device_memory}
+# AvgMemoryUsage: ${avg_memory}
+# MinMemoryUsage: ${min_memory}
+# MaxMemoryUsage: ${max_memory}
+# NpuUtilization: ${npu_util}
 
 # Save results to file if enabled
 if [ "$SAVE_RESULT" == "1" ]; then

@@ -29,6 +29,7 @@ struct MemoryInfo {
     uint64_t free_memory;      // Free memory (bytes)
     float usage_percent;       // Usage percentage
     uint16_t ddr_freq;         // DDR frequency (MHz)
+    uint16_t npu_util_rate;    // NPU utilization rate (%)
     uint64_t timestamp;        // Timestamp (microseconds)
 };
 
@@ -57,6 +58,11 @@ struct DeviceMemoryStats {
     uint16_t max_ddr_freq;
     uint16_t min_ddr_freq;
     uint16_t avg_ddr_freq;
+
+    // NPU utilization statistics (percentage)
+    uint16_t peak_npu_util;        // Peak NPU utilization
+    uint16_t min_npu_util;         // Minimum NPU utilization
+    uint16_t avg_npu_util;         // Average NPU utilization
 
     // Sampling information
     uint32_t sample_count;         // Number of samples
