@@ -726,23 +726,17 @@ exit:
         if (has_valid_data) {
             const DeviceMemoryStats& dev = saved_mem_stats.devices[0];
             printf("DeviceMemory: %.2f MB\n", dev.total_memory / 1024.0f / 1024.0f);
-            printf("MinMemoryUsage: %.2f MB (%.1f%%)\n",
-                   dev.min_used_memory / 1024.0f / 1024.0f, dev.min_usage_percent);
             printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
                    dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
+            printf("MinMemoryUsage: %.2f MB (%.1f%%)\n",
+                   dev.min_used_memory / 1024.0f / 1024.0f, dev.min_usage_percent);
             printf("MaxMemoryUsage: %.2f MB (%.1f%%)\n",
                    dev.peak_used_memory / 1024.0f / 1024.0f, dev.peak_usage_percent);
-            printf("MinNpuUtilization: %u%%\n", dev.min_npu_util);
-            printf("AvgNpuUtilization: %u%%\n", dev.avg_npu_util);
-            printf("MaxNpuUtilization: %u%%\n", dev.peak_npu_util);
         } else {
             printf("DeviceMemory: error\n");
-            printf("MinMemoryUsage: error\n");
             printf("AvgMemoryUsage: error\n");
+            printf("MinMemoryUsage: error\n");
             printf("MaxMemoryUsage: error\n");
-            printf("MinNpuUtilization: error\n");
-            printf("AvgNpuUtilization: error\n");
-            printf("MaxNpuUtilization: error\n");
         }
 
         printf("\n=================================\n");

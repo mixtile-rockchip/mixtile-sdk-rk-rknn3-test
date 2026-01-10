@@ -106,8 +106,10 @@ prefill_tps=""
 tps=""
 total_time=""
 total_runs=""
+device_memory=""
 avg_memory=""
-npu_util=""
+min_memory=""
+max_memory=""
 
 for log in "${log_files[@]}"; do
     echo "$log"
@@ -123,8 +125,10 @@ for log in "${log_files[@]}"; do
         tps=$(grep '^TPS:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
         total_time=$(grep '^TotalTime:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
         total_runs=$(grep '^TotalRuns:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+        device_memory=$(grep '^DeviceMemory:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
         avg_memory=$(grep '^AvgMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
-        npu_util=$(grep '^AvgNpuUtilization:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+        min_memory=$(grep '^MinMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+        max_memory=$(grep '^MaxMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
     else
         echo "--- Log file: $(basename "$log") ([ERROR] Abnormal) ---"
         tail -n 20 "$log" # If success marker not found, print last 20 lines of error
@@ -153,8 +157,10 @@ Prefill: ${prefill_tps}
 TPS: ${tps}
 TotalTime: ${total_time}
 TotalRuns: ${total_runs}
+DeviceMemory: ${device_memory}
 AvgMemoryUsage: ${avg_memory}
-AvgNpuUtilization: ${npu_util}
+MinMemoryUsage: ${min_memory}
+MaxMemoryUsage: ${max_memory}
 EOF
 )
 
