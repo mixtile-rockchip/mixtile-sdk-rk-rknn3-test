@@ -19,7 +19,6 @@
 #include "rknn3_vlm.h"
 #include "common.h"
 #include "image_utils.h"
-#include "MemoryMonitor.h"
 // #include "rknn_api.h"
 #include <math.h>
 
@@ -318,17 +317,6 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
         printf("[rknn3_model_stress_test_error] app_ctx or img is NULL");
         return -1;
     }
-
-    // Initialize memory monitor
-    MemoryMonitor* memory_monitor = new MemoryMonitor(100000); // 100ms interval
-    if (!memory_monitor->initialize()) {
-        printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
-        delete memory_monitor;
-        memory_monitor = nullptr;
-    } else {
-        memory_monitor->set_realtime_print(false);
-        printf("[rknn3_model_stress_test] Memory monitor initialized successfully\n");
-    }
     static float last_vision_cost = 0.f;
     static float last_ttft = 0.f;
     static float last_tps = 0.f;
@@ -448,11 +436,6 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
         int iter = 0;
 
         while (true) {
-            // Start memory monitoring
-            if (memory_monitor) {
-                memory_monitor->start_monitoring();
-            }
-
             one_infer_time.tik();
             ret = inference_rknn3_vlm_vision(&(app_ctx->vision), img, 1);
             if (ret == 0) {
@@ -466,11 +449,6 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
             // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr, vision_ctx->outputs[0].mem->size);
 
                 ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs, 1);
-            }
-
-            // Stop memory monitoring
-            if (memory_monitor) {
-                memory_monitor->stop_monitoring();
             }
 
             if (ret != 0) {
@@ -522,43 +500,17 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
 
     if(ret == 0) {
         printf("[rknn3_model_stress_test_done] rknn3_vlm_demo run done\n");
-        printf("\n===== RKNN3_VLM_TEST Results =====\n");
-        printf("Vision: %.f ms\n", vision_cost.get_time());
-        printf("GenLen: %d tokens\n", gen_tokens);
-        printf("TTFT: %.3f ms\n", llm_perfill.get_time());
-        printf("TPS: %.3f tokens/s\n", tps);
+        printf("\n+------------------+--------------------+\n");
+        printf("| Stage            | Perf               |\n");
+        printf("+------------------+--------------------+\n");
+        printf("| %-16s | %-14.f(ms) |\n", "Vision", vision_cost.get_time());
+        // printf("| %-16s | %-10.d(tokens) |\n", "SeqLen",result->perf.prefill_tokens);
+        printf("| %-16s | %-10.d(tokens) |\n", "GenLen",gen_tokens);
+        // printf("| %-16s | %-8.3f(tokens/s) |\n", "Pefill",result->perf.prefill_tokens/result->perf.prefill_time_ms*1000.);
+        printf("| %-16s | %-14.3f(ms) |\n", "TTFT", llm_perfill.get_time());
+        printf("| %-16s | %-8.3f(tokens/s) |\n", "TPS", tps);
+        printf("+------------------+--------------------+\n");
 
-        // Print memory statistics
-        if (memory_monitor) {
-            MemoryStatistics mem_stats = memory_monitor->get_statistics();
-            if (mem_stats.is_valid && !mem_stats.devices.empty()) {
-                const DeviceMemoryStats& dev = mem_stats.devices[0];
-                printf("DeviceMemory: %.2f MB\n", dev.total_memory / 1024.0f / 1024.0f);
-                printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
-                       dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
-                printf("MinMemoryUsage: %.2f MB (%.1f%%)\n",
-                       dev.min_used_memory / 1024.0f / 1024.0f, dev.min_usage_percent);
-                printf("MaxMemoryUsage: %.2f MB (%.1f%%)\n",
-                       dev.peak_used_memory / 1024.0f / 1024.0f, dev.peak_usage_percent);
-            } else {
-                printf("DeviceMemory: error\n");
-                printf("AvgMemoryUsage: error\n");
-                printf("MinMemoryUsage: error\n");
-                printf("MaxMemoryUsage: error\n");
-            }
-        } else {
-            printf("DeviceMemory: error\n");
-            printf("AvgMemoryUsage: error\n");
-            printf("MinMemoryUsage: error\n");
-            printf("MaxMemoryUsage: error\n");
-        }
-
-    }
-
-    // Cleanup memory monitor
-    if (memory_monitor) {
-        delete memory_monitor;
-        memory_monitor = nullptr;
     }
 
     return ret;

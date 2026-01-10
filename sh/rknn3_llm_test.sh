@@ -13,7 +13,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "RKNN3 LLM Demo Stress Test Tool"
     echo "==========================================="
     echo "Usage:"
-    echo "  $0 <model_dir> <seq_len> <new_tokens> <loop_time> <loop_count> <device_id> [core_mask] [save_result]"
+    echo "  $0 <model_dir> <seq_len> <new_tokens> <loop_time> <loop_count> <device_id> [core_mask(optional)]"
     echo ""
     echo "Parameters:"
     echo "  model_dir       Model file base path (before .rknn extension), e.g., /userdata/Qwen2.5-0.5B/Qwen2.5-0.5B"
@@ -22,8 +22,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "  loop_time       Stress test duration (hours), if 0, use loop count"
     echo "  loop_count      Inference loop count, time loop takes priority"
     echo "  device_id       Device ID (typically 0)"
-    echo "  core_mask       Core mask (optional, hex), e.g., '0xff' for all 8 cores, '0x0f' for cores 0-3, default: 0xff"
-    echo "  save_result     Save result to file (optional): 1=save, 0=no save, default: 1"
+    echo "  core_mask       Core mask (optional, hex), e.g., '0xff' for all 8 cores, '0x0f' for cores 0-3"
     echo ""
     echo "Core mask examples:"
     echo "  0xff   - All 8 cores (binary: 11111111)"
@@ -37,7 +36,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
 fi
 
 if [ $# -lt 6 ]; then
-    echo "Usage: $0 <model_dir> <seq_len> <new_tokens> <loop_time> <loop_count> <device_id> [core_mask] [save_result]"
+    echo "Usage: $0 <model_dir> <seq_len> <new_tokens> <loop_time> <loop_count> <device_id> [core_mask(optional)]"
     exit 1
 fi
 MODEL_DIR=$1
@@ -47,7 +46,6 @@ TIME_LOOP=$4
 LOOP_CNT=$5
 DEVICE_ID=$6
 CORE_MASK="${7:-0xff}"  # Default: all 8 cores
-SAVE_RESULT="${8:-1}"   # Default: save to file
 
 model_name=$(basename "$MODEL_DIR")
 
@@ -106,10 +104,6 @@ prefill_tps=""
 tps=""
 total_time=""
 total_runs=""
-device_memory=""
-avg_memory=""
-min_memory=""
-max_memory=""
 
 for log in "${log_files[@]}"; do
     echo "$log"
@@ -119,16 +113,12 @@ for log in "${log_files[@]}"; do
         sed -n '/rknn3_model_stress_test_done/,$p' "$log"
 
 
-        ttft=$(grep '^TTFT:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
-        tpot=$(grep '^TPOT:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
-        prefill_tps=$(grep '^Prefill:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
-        tps=$(grep '^TPS:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
-        total_time=$(grep '^TotalTime:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
-        total_runs=$(grep '^TotalRuns:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
-        device_memory=$(grep '^DeviceMemory:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
-        avg_memory=$(grep '^AvgMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
-        min_memory=$(grep '^MinMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
-        max_memory=$(grep '^MaxMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+        ttft=$(grep 'TTFT:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=3;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+        tpot=$(grep 'TPOT:' "$log" 2>/dev/null | tail -n 1 | awk -F'=' '{print $NF}' | sed 's/^[[:space:]]*//')
+        prefill_tps=$(grep 'Prefill:' "$log" 2>/dev/null | tail -n 1 | awk -F'=' '{print $NF}' | sed 's/^[[:space:]]*//')
+        tps=$(grep 'TPS:' "$log" 2>/dev/null | tail -n 1 | awk -F'=' '{print $NF}' | sed 's/^[[:space:]]*//')
+        total_time=$(grep 'Total time:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=3;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+        total_runs=$(grep 'Total runs:' "$log" 2>/dev/null | tail -n 1 | awk '{print $NF}')
     else
         echo "--- Log file: $(basename "$log") ([ERROR] Abnormal) ---"
         tail -n 20 "$log" # If success marker not found, print last 20 lines of error
@@ -157,30 +147,21 @@ Prefill: ${prefill_tps}
 TPS: ${tps}
 TotalTime: ${total_time}
 TotalRuns: ${total_runs}
-DeviceMemory: ${device_memory}
-AvgMemoryUsage: ${avg_memory}
-MinMemoryUsage: ${min_memory}
-MaxMemoryUsage: ${max_memory}
 EOF
 )
 
-# Save results to file if enabled
-if [ "$SAVE_RESULT" == "1" ]; then
-    # Use flock for locking to avoid concurrent write conflicts
-    (
-        flock -x 200  # Acquire exclusive lock
-        # If file exists and is not empty, append blank line first
-        if [ -s "$RESULT_FILE" ]; then
-            echo "" >> "$RESULT_FILE"
-        fi
-        # Append new content
-        echo "$APPEND_CONTENT" >> "$RESULT_FILE"
-    ) 200>"$LOCK_FILE"
+# Use flock for locking to avoid concurrent write conflicts
+(
+    flock -x 200  # Acquire exclusive lock
+    # If file exists and is not empty, append blank line first
+    if [ -s "$RESULT_FILE" ]; then
+        echo "" >> "$RESULT_FILE"
+    fi
+    # Append new content
+    echo "$APPEND_CONTENT" >> "$RESULT_FILE"
+) 200>"$LOCK_FILE"
 
-    echo "Test results appended to: ${RESULT_FILE}"
-else
-    echo "Result saving disabled (save_result=$SAVE_RESULT)"
-fi
+echo "Test results appended to: ${RESULT_FILE}"
 
 if [ $error_found -eq 0 ]; then
     # Delete temporary log file on success

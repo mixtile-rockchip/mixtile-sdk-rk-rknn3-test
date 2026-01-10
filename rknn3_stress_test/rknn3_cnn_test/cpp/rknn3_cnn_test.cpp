@@ -25,7 +25,7 @@
 #include <math.h>
 #include "cnpy.h"
 #include "float16.h"
-#include "MemoryMonitor.h"
+
 
 static void dump_tensor_attr(rknn3_tensor_attr* attrs)
 {
@@ -80,14 +80,13 @@ int init_common_img(rknn_common_img_ctx* vision_ctx, const char* model_path, con
     init_extend.device_id = rknn3_devices.devices[device_id].id;
 
     // RKNN Init
-    printf("checkpoint1");
     ret = rknn3_init(&ctx, &init_extend);
     if (ret < 0)
     {
         printf("[rknn3_model_stress_test_error] rknn_init fail ret=%d\n", ret);
         return ret;
     }
-    printf("checkpoint2");
+
     // Load RKNN Model
     ret = rknn3_load_model_from_path(ctx, model_path, weight_path);
     if (ret < 0) {
@@ -388,17 +387,6 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
         return -1;
     }
 
-    // Initialize memory monitor
-    MemoryMonitor* memory_monitor = new MemoryMonitor(1000);
-    if (!memory_monitor->initialize()) {
-        printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
-        delete memory_monitor;
-        memory_monitor = nullptr;
-    } else {
-        memory_monitor->set_realtime_print(false);
-        printf("[rknn3_model_stress_test] Memory monitor initialized successfully\n");
-    }
-
     int ret;
     image_buffer_t dst_img;
     memset(&dst_img, 0, sizeof(image_buffer_t));
@@ -556,11 +544,6 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
             break;
         }
 
-        // Start memory monitoring
-        if (memory_monitor) {
-            memory_monitor->start_monitoring();
-        }
-
         // --- Sync Input ---
         for (int i = 0; i < vision_ctx->io_num.n_input; i++) {
             ret = rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->inputs[i].mem, RKNN3_MEMORY_SYNC_TO_DEVICE);
@@ -580,11 +563,6 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
         // --- Sync Output ---
         for (int i = 0; i < vision_ctx->io_num.n_output; i++) {
             rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
-        }
-
-        // Stop memory monitoring
-        if (memory_monitor) {
-            memory_monitor->stop_monitoring();
         }
 
         infer_cnt++;
@@ -613,31 +591,6 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
             printf("device_id: %s\n", vision_ctx->device_id_mac);
         }
         printf("run %d ,tot_time:%8.2f,avgFPS: %.3f ,avgCost: %8.2f ms\n",infer_cnt,total_time,avgFPS,avgCost);
-
-        // Print memory statistics
-        if (memory_monitor) {
-            MemoryStatistics mem_stats = memory_monitor->get_statistics();
-            if (mem_stats.is_valid && !mem_stats.devices.empty()) {
-                const DeviceMemoryStats& dev = mem_stats.devices[0];
-                printf("DeviceMemory: %.2f MB\n", dev.total_memory / 1024.0f / 1024.0f);
-                printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
-                       dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
-                printf("MinMemoryUsage: %.2f MB (%.1f%%)\n",
-                       dev.min_used_memory / 1024.0f / 1024.0f, dev.min_usage_percent);
-                printf("MaxMemoryUsage: %.2f MB (%.1f%%)\n",
-                       dev.peak_used_memory / 1024.0f / 1024.0f, dev.peak_usage_percent);
-            } else {
-                printf("DeviceMemory: error\n");
-                printf("AvgMemoryUsage: error\n");
-                printf("MinMemoryUsage: error\n");
-                printf("MaxMemoryUsage: error\n");
-            }
-        } else {
-            printf("DeviceMemory: error\n");
-            printf("AvgMemoryUsage: error\n");
-            printf("MinMemoryUsage: error\n");
-            printf("MaxMemoryUsage: error\n");
-        }
 
         // printf("Run Count: %d, Tot Time: %8.2f ms\n", infer_cnt, total_time);
         // printf("Avg FPS  : %.2f, Avg Cost : %8.2f ms\n", avgFPS, avgCost);
@@ -735,12 +688,6 @@ int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,ui
     // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr,vision_ctx->outputs[0].mem->size);
 
 out:
-    // Cleanup memory monitor
-    if (memory_monitor) {
-        delete memory_monitor;
-        memory_monitor = nullptr;
-    }
-
     if (dst_img.virt_addr != NULL)
     {
         free(dst_img.virt_addr);
