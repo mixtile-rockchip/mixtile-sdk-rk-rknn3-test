@@ -20,14 +20,15 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "RKNN3 CNN Demo Stress Test Tool"
     echo "==========================================="
     echo "Usage:"
-    echo "  $0 <model_path> <loop_time_hours> <count_loop> <device_id> [core_mask(optional)]"
+    echo "  $0 <model_path> <loop_time_hours> <count_loop> <device_id> [core_mask] [save_result]"
     echo ""
     echo "Parameters:"
     echo "  model_path       Model file base path (before .rknn extension)"
     echo "  loop_time_hours  Stress test duration (hours)"
     echo "  count_loop       Inference loop count"
     echo "  device_id        Device ID (typically 0)"
-    echo "  core_mask        Core mask (optional, hex), e.g., '0xff' for all 8 cores, '0x0f' for cores 0-3"
+    echo "  core_mask        Core mask (optional, hex), e.g., '0xff' for all 8 cores, '0x0f' for cores 0-3, default: 0x01"
+    echo "  save_result      Save result to file (optional): 1=save, 0=no save, default: 1"
     echo ""
     echo "Core mask examples:"
     echo "  0xff   - All 8 cores (binary: 11111111)"
@@ -42,13 +43,14 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     exit 1
 fi
 
-[ $# -lt 4 ] && { echo "Usage: $0 <model_path> <loop_time_hours> <count_loop> <device_id> [core_mask(optional)]"; exit 1; }
+[ $# -lt 4 ] && { echo "Usage: $0 <model_path> <loop_time_hours> <count_loop> <device_id> [core_mask] [save_result]"; exit 1; }
 
 MODEL=$1
 TIME_LOOP=$2
 COUNT_LOOP=$3
 DEVICE_ID=$4
 CORE_MASK="${5:-0x01}"  # Default: single core
+SAVE_RESULT="${6:-1}"   # Default: save to file
 
 # Ensure absolute path and safely handle dirname
 model_path_dir=$(dirname "$MODEL")
@@ -246,18 +248,23 @@ avg_cost: ${avg_cost} ms
 EOF
 )
 
-# Use flock for locking to avoid concurrent write conflicts
-(
-    flock -x 200  # Acquire exclusive lock
-    # If file exists and is not empty, append blank line first
-    if [ -s "$RESULT_FILE" ]; then
-        echo "" >> "$RESULT_FILE"
-    fi
-    # Append new content
-    echo "$APPEND_CONTENT" >> "$RESULT_FILE"
-) 200>"$LOCK_FILE"
+# Save results to file if enabled
+if [ "$SAVE_RESULT" == "1" ]; then
+    # Use flock for locking to avoid concurrent write conflicts
+    (
+        flock -x 200  # Acquire exclusive lock
+        # If file exists and is not empty, append blank line first
+        if [ -s "$RESULT_FILE" ]; then
+            echo "" >> "$RESULT_FILE"
+        fi
+        # Append new content
+        echo "$APPEND_CONTENT" >> "$RESULT_FILE"
+    ) 200>"$LOCK_FILE"
 
-echo "Test results appended to: ${RESULT_FILE}"
+    echo "Test results appended to: ${RESULT_FILE}"
+else
+    echo "Result saving disabled (save_result=$SAVE_RESULT)"
+fi
 
 if [ $error_found -eq 0 ]; then
     # Delete temporary log file on success

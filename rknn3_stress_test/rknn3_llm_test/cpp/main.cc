@@ -646,14 +646,14 @@ exit:
         float final_total_time = (first_token.get_time() + decode_time_ms.get_time()) / 1000.0;
 
         printf("\n===== RKNN3_LLM_TEST Results Summary =====\n\n");
-        printf("RKNN3 Model: %s\n",model_name);
-        printf("%s RK1820 deviceID: %s\n",model_name,device_id_mac);
-        printf("%s TTFT: %12.3f ms\n",model_name, ttft_ms);
-        printf("%s TPOT: %13.3f/%lu = %.3f (ms)\n", model_name,decode_time_ms.get_time(), state.n_decode_tokens, tpot);
-        printf("%s Prefill: %6d/%.3f = %.3f (tokens/s)\n",model_name, prefill_n_tokens, (ttft_ms/1000.f), prefill_per_second);
-        printf("%s TPS: %10lu/%.3f = %.3f (tokens/s)\n", model_name,state.n_decode_tokens, (decode_time_ms.get_time() / 1000.0), tps);
-        printf("%s Total time: %12.3f (ms)\n",model_name,infer_total_time);
-        printf("%s Total runs: %d\n",model_name,iter);
+        printf("Model: %s\n",model_name);
+        printf("DeviceID: %s\n",device_id_mac);
+        printf("TTFT: %.3f ms\n", ttft_ms);
+        printf("TPOT: %.3f ms\n", tpot);
+        printf("Prefill: %.3f tokens/s\n", prefill_per_second);
+        printf("TPS: %.3f tokens/s\n", tps);
+        printf("TotalTime: %.3f ms\n",infer_total_time);
+        printf("TotalRuns: %d\n",iter);
         printf("\n=================================\n");
         // printf("rknn3_llm_test loop: %d,total_time:%8.2f ms\n", iter,infer_total_time);
         // printf("[rknn3_model_stress_test_done]\n");

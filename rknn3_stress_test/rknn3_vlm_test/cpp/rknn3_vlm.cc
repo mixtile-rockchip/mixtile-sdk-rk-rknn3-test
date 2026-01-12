@@ -500,17 +500,10 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
 
     if(ret == 0) {
         printf("[rknn3_model_stress_test_done] rknn3_vlm_demo run done\n");
-        printf("\n+------------------+--------------------+\n");
-        printf("| Stage            | Perf               |\n");
-        printf("+------------------+--------------------+\n");
-        printf("| %-16s | %-14.f(ms) |\n", "Vision", vision_cost.get_time());
-        // printf("| %-16s | %-10.d(tokens) |\n", "SeqLen",result->perf.prefill_tokens);
-        printf("| %-16s | %-10.d(tokens) |\n", "GenLen",gen_tokens);
-        // printf("| %-16s | %-8.3f(tokens/s) |\n", "Pefill",result->perf.prefill_tokens/result->perf.prefill_time_ms*1000.);
-        printf("| %-16s | %-14.3f(ms) |\n", "TTFT", llm_perfill.get_time());
-        printf("| %-16s | %-8.3f(tokens/s) |\n", "TPS", tps);
-        printf("+------------------+--------------------+\n");
-
+        printf("Vision: %.f ms\n", vision_cost.get_time());
+        printf("GenLen: %d tokens\n", gen_tokens);
+        printf("TTFT: %.3f ms\n", llm_perfill.get_time());
+        printf("TPS: %.3f tokens/s\n", tps);
     }
 
     return ret;
