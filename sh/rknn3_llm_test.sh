@@ -2,6 +2,10 @@
 
 echo performance | tee $(find /sys/ -name *governor)
 
+# Source common utility functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/rknn3_model_utils.sh"
+
 MAX_CONTEXT=1024
 CORE_MASK=0xff
 
@@ -49,11 +53,41 @@ CORE_MASK="${7:-0xff}"  # Default: all 8 cores
 
 model_name=$(basename "$MODEL_DIR")
 
-RKNN_MODEL=${MODEL_DIR}.rknn
-WEIGHT_MODEL=${MODEL_DIR}.weight
-for f in "$RKNN_MODEL" "$WEIGHT_MODEL"; do
-    if [ ! -f "$f" ]; then
-        echo "[ERROR] Missing file: $f"
+# Find model files in the directory (any files with required extensions)
+model_dir=$(dirname "$MODEL_DIR")
+if [ -d "$MODEL_DIR" ]; then
+    model_dir="$MODEL_DIR"
+fi
+
+RKNN_MODEL=$(find "$model_dir" -maxdepth 1 -type f -name "*.rknn" 2>/dev/null | head -n 1)
+WEIGHT_MODEL=$(find "$model_dir" -maxdepth 1 -type f -name "*.weight" 2>/dev/null | head -n 1)
+TOKENIZER=$(find "$model_dir" -maxdepth 1 -type f -name "*.tokenizer.gguf" 2>/dev/null | head -n 1)
+EMBEDDING=$(find "$model_dir" -maxdepth 1 -type f -name "*.embed.bin" 2>/dev/null | head -n 1)
+
+# Check if all required files exist
+declare -A required_files=(
+    ["RKNN_MODEL"]="$RKNN_MODEL"
+    ["WEIGHT_MODEL"]="$WEIGHT_MODEL"
+    ["TOKENIZER"]="$TOKENIZER"
+    ["EMBEDDING"]="$EMBEDDING"
+)
+
+# Define file patterns for error messages
+declare -A file_patterns=(
+    ["RKNN_MODEL"]="*.rknn"
+    ["WEIGHT_MODEL"]="*.weight"
+    ["TOKENIZER"]="*.tokenizer.gguf"
+    ["EMBEDDING"]="*.embed.bin"
+)
+
+for name in "${!required_files[@]}"; do
+    file="${required_files[$name]}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+        pattern="${file_patterns[$name]}"
+        echo "[ERROR] Missing file for $name"
+        echo "        Search directory: $model_dir"
+        echo "        Search pattern: $pattern"
+        echo "        Found: ${file:-none}"
         exit 1
     fi
 done
@@ -77,10 +111,10 @@ current_log="${log_pre}_${model_dirname}_${start_time}_device${DEVICE_ID}_${CORE
 log_files+=("$current_log")
 
 rknn3_llm_demo \
-    -m "${MODEL_DIR}.rknn" \
-    -w "${MODEL_DIR}.weight" \
-    -tk "${MODEL_DIR}.tokenizer.gguf" \
-    -em "${MODEL_DIR}.embed.bin" \
+    -m "$RKNN_MODEL" \
+    -w "$WEIGHT_MODEL" \
+    -tk "$TOKENIZER" \
+    -em "$EMBEDDING" \
     -ctx "$MAX_CONTEXT" \
     -ni "$PROMPT_LEN" \
     -no "$GEN_LEN" \

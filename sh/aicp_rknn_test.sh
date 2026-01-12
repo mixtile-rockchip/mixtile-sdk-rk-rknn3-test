@@ -389,19 +389,19 @@ test_model_with_params() {
             echo -e "${YELLOW}Command to execute:${NC}"
             echo -e "${GREEN}./rknn3_llm_test.sh $model_path/$model_name $seq_len $new_tokens $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
             echo
-            ./rknn3_llm_test.sh "$model_path/$model_name" "$seq_len" "$new_tokens" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
+            ./rknn3_llm_test.sh "$model_path" "$seq_len" "$new_tokens" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
             ;;
         "cnn")
             echo -e "${YELLOW}Command to execute:${NC}"
             echo -e "${GREEN}./rknn3_cnn_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
             echo
-            ./rknn3_cnn_test.sh "$model_path/$model_name" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
+            ./rknn3_cnn_test.sh "$model_path" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
             ;;
         "vlm")
             echo -e "${YELLOW}Command to execute:${NC}"
             echo -e "${GREEN}./rknn3_vlm_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
             echo
-            ./rknn3_vlm_test.sh "$model_path/$model_name" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
+            ./rknn3_vlm_test.sh "$model_path" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
             ;;
         *)
             echo -e "${RED}Unknown model type: $model_type${NC}"

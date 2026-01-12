@@ -8,6 +8,10 @@ else
     set -u  # Old bash versions only use -u
 fi
 
+# Source common utility functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/rknn3_model_utils.sh"
+
 # Control whether to delete temporary log files (default: true)
 CLEANUP_TEMP_LOG="${CLEANUP_TEMP_LOG:-true}"
 
@@ -59,12 +63,46 @@ mkdir -p "$LOG_DIR"
 log_pre="${LOG_DIR}/rknn3_$$"
 log_files=()
 
-RKNN_MODEL=${MODEL}.rknn
-WEIGHT_MODEL=${MODEL}.weight
+# Find model files in the directory (any .rknn and .weight files)
+model_dir=$(dirname "$MODEL")
+if [ -d "$MODEL" ]; then
+    model_dir="$MODEL"
+fi
+
+RKNN_MODEL=$(find "$model_dir" -maxdepth 1 -type f -name "*.rknn" 2>/dev/null | head -n 1)
+WEIGHT_MODEL=$(find "$model_dir" -maxdepth 1 -type f -name "*.weight" 2>/dev/null | head -n 1)
+
 IMG_PATH="test.jpg"
-for f in "$RKNN_MODEL" "$WEIGHT_MODEL" "$IMG_PATH"; do
-    if [ ! -f "$f" ]; then
-        echo "[ERROR] Missing file: $f"
+
+# Check if all required files exist
+declare -A required_files=(
+    ["RKNN_MODEL"]="$RKNN_MODEL"
+    ["WEIGHT_MODEL"]="$WEIGHT_MODEL"
+    ["IMG_PATH"]="$IMG_PATH"
+)
+
+# Define file patterns and search locations for error messages
+declare -A file_patterns=(
+    ["RKNN_MODEL"]="*.rknn"
+    ["WEIGHT_MODEL"]="*.weight"
+    ["IMG_PATH"]="test.jpg"
+)
+
+declare -A search_locations=(
+    ["RKNN_MODEL"]="$model_dir"
+    ["WEIGHT_MODEL"]="$model_dir"
+    ["IMG_PATH"]="current directory"
+)
+
+for name in "${!required_files[@]}"; do
+    file="${required_files[$name]}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+        pattern="${file_patterns[$name]}"
+        location="${search_locations[$name]}"
+        echo "[ERROR] Missing file for $name"
+        echo "        Search location: $location"
+        echo "        Search pattern: $pattern"
+        echo "        Found: ${file:-none}"
         exit 1
     fi
 done

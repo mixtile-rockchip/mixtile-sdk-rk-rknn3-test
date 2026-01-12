@@ -11,6 +11,10 @@
 
 echo performance | tee $(find /sys/ -name *governor)
 
+# Source common utility functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/rknn3_model_utils.sh"
+
 # Control whether to delete temporary log files (default: true)
 CLEANUP_TEMP_LOG="${CLEANUP_TEMP_LOG:-true}"
 
@@ -59,20 +63,72 @@ VISION_CORE_MASK="$CORE_MASK"
 LLM_CORE_MASK="$CORE_MASK"
 
 echo "${MODEL_DIR}"
-# Model file definitions
-VISION_MODEL="${MODEL_DIR}-vision.rknn"
-VISION_WEIGHT="${MODEL_DIR}-vision.weight"
-LLM_MODEL="${MODEL_DIR}-llm.rknn"
-LLM_WEIGHT="${MODEL_DIR}-llm.weight"
-TOKENIZER="${MODEL_DIR}-llm.tokenizer.gguf"
-EMBEDDING="${MODEL_DIR}-llm.embed.bin"
-IMAGE_PATH="test.jpg"
-PROMPT_FILE="${MODEL_DIR}.ini"
 
-# Check if key files exist
-for f in "$VISION_MODEL" "$LLM_MODEL" "$TOKENIZER" "$EMBEDDING" "$IMAGE_PATH" "$PROMPT_FILE"; do
-    if [ ! -f "$f" ]; then
-        echo "[ERROR] Missing file: $f"
+# Determine search directory
+search_dir=$(dirname "$MODEL_DIR")
+if [ -d "$MODEL_DIR" ]; then
+    search_dir="$MODEL_DIR"
+fi
+
+# Model file definitions with flexible pattern matching
+# Vision/LLM files: match keyword + extension (case-insensitive)
+VISION_MODEL=$(find "$search_dir" -maxdepth 1 -type f -iname "*vision*.rknn" 2>/dev/null | head -n 1)
+VISION_WEIGHT=$(find "$search_dir" -maxdepth 1 -type f -iname "*vision*.weight" 2>/dev/null | head -n 1)
+LLM_MODEL=$(find "$search_dir" -maxdepth 1 -type f -iname "*llm*.rknn" 2>/dev/null | head -n 1)
+LLM_WEIGHT=$(find "$search_dir" -maxdepth 1 -type f -iname "*llm*.weight" 2>/dev/null | head -n 1)
+
+# Tokenizer, embedding and prompt files: match extension only
+TOKENIZER=$(find "$search_dir" -maxdepth 1 -type f -name "*.tokenizer.gguf" 2>/dev/null | head -n 1)
+EMBEDDING=$(find "$search_dir" -maxdepth 1 -type f -name "*.embed.bin" 2>/dev/null | head -n 1)
+PROMPT_FILE=$(find "$search_dir" -maxdepth 1 -type f -name "*.ini" 2>/dev/null | head -n 1)
+
+
+IMAGE_PATH="test.jpg"
+
+# Check if all required files exist
+declare -A required_files=(
+    ["VISION_MODEL"]="$VISION_MODEL"
+    ["VISION_WEIGHT"]="$VISION_WEIGHT"
+    ["LLM_MODEL"]="$LLM_MODEL"
+    ["LLM_WEIGHT"]="$LLM_WEIGHT"
+    ["TOKENIZER"]="$TOKENIZER"
+    ["EMBEDDING"]="$EMBEDDING"
+    ["IMAGE_PATH"]="$IMAGE_PATH"
+    ["PROMPT_FILE"]="$PROMPT_FILE"
+)
+
+# Define file patterns and search locations for error messages
+declare -A file_patterns=(
+    ["VISION_MODEL"]="*vision*.rknn"
+    ["VISION_WEIGHT"]="*vision*.weight"
+    ["LLM_MODEL"]="*llm*.rknn"
+    ["LLM_WEIGHT"]="*llm*.weight"
+    ["TOKENIZER"]="*.tokenizer.gguf"
+    ["EMBEDDING"]="*.embed.bin"
+    ["IMAGE_PATH"]="test.jpg"
+    ["PROMPT_FILE"]="*.ini"
+)
+
+declare -A search_locations=(
+    ["VISION_MODEL"]="$search_dir"
+    ["VISION_WEIGHT"]="$search_dir"
+    ["LLM_MODEL"]="$search_dir"
+    ["LLM_WEIGHT"]="$search_dir"
+    ["TOKENIZER"]="$search_dir"
+    ["EMBEDDING"]="$search_dir"
+    ["IMAGE_PATH"]="current directory"
+    ["PROMPT_FILE"]="$search_dir"
+)
+
+for name in "${!required_files[@]}"; do
+    file="${required_files[$name]}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+        pattern="${file_patterns[$name]}"
+        location="${search_locations[$name]}"
+        echo "[ERROR] Missing file for $name"
+        echo "        Search location: $location"
+        echo "        Search pattern: $pattern"
+        echo "        Found: ${file:-none}"
         exit 1
     fi
 done
