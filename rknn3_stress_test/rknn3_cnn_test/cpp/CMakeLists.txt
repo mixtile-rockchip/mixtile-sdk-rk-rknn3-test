@@ -14,8 +14,9 @@ if (ENABLE_ASAN)
 endif ()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../rknn/rknn3-model-zoo/3rdparty/ 3rdparty.out)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../rknn/rknn3-model-zoo/utils/ utils.out)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../utils/ utils.out)
 
+message(STATUS "CMAKE_CURRENT_SOURCE_DIR = ${CMAKE_CURRENT_SOURCE_DIR}")
 set(CMAKE_INSTALL_RPATH "$ORIGIN/lib")
 
 file(GLOB SRCS ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)

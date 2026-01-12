@@ -14,7 +14,7 @@ if (ENABLE_ASAN)
 endif ()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../rknn/rknn3-model-zoo/3rdparty/ 3rdparty.out)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../rknn/rknn3-model-zoo/utils/ utils.out)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../utils/ utils.out)
 
 set(CMAKE_INSTALL_RPATH "$ORIGIN/lib")
 
