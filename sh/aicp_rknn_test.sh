@@ -387,19 +387,19 @@ test_model_with_params() {
     case "$model_type" in
         "llm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_llm_test.sh $model_path/$model_name $seq_len $new_tokens $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
+            echo -e "${GREEN}./rknn3_llm_test.sh $model_path $seq_len $new_tokens $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
             echo
             ./rknn3_llm_test.sh "$model_path" "$seq_len" "$new_tokens" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
             ;;
         "cnn")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
+            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
             echo
             ./rknn3_cnn_test.sh "$model_path" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
             ;;
         "vlm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path/$model_name $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
+            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
             echo
             ./rknn3_vlm_test.sh "$model_path" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
             ;;
@@ -1076,50 +1076,71 @@ loop_test_all_models() {
     log_message "=== Starting loop testing of all models ===" "$log_file"
     log_message "Performance report generation: $generate_report" "$log_file"
 
-    local total_models=${#all_models[@]}
-    local current_model=0
-    local successful_tests=0
-    local failed_tests=0
+local total_models=${#all_models[@]}
+local current_model=0
+local successful_tests=0
+local failed_tests=0
 
-    for index in $(echo "${!all_models[@]}" | tr ' ' '\n' | sort -n); do
-        ((current_model++))
-        local model_info=(${all_models[$index]})
-        local model_name="${model_info[0]}"
-        local model_type="${model_info[1]}"
-        local model_path=$(get_model_path "$model_name" "$model_type")
+for index in $(echo "${!all_models[@]}" | tr ' ' '\n' | sort -n); do
+    ((current_model++))
+    local model_info=(${all_models[$index]})
+    local model_name="${model_info[0]}"
+    local model_type="${model_info[1]}"
+    local model_path=$(get_model_path "$model_name" "$model_type")
 
-        local devices_core="0xff"
-        if [[ "$model_type" == "cnn" ]]; then
-            devices_core="0x01"
-        fi
+    local devices_core="0xff"
+    if [[ "$model_type" == "cnn" ]]; then
+        devices_core="0x01"
+    fi
 
-        echo
-        echo -e "${BLUE}========================================${NC}"
-        echo -e "${GREEN}Testing model $current_model of $total_models${NC}"
-        echo -e "${GREEN}Model: $model_name ($model_type)${NC}"
-        echo -e "${BLUE}========================================${NC}"
+    echo
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}Testing model $current_model of $total_models${NC}"
+    echo -e "${GREEN}Model: $model_name ($model_type)${NC}"
+    echo -e "${BLUE}========================================${NC}"
 
-        if [[ ! -e "$model_path" ]] && [[ ! -e "$model_path.rknn" ]] && [[ -z "$(ls "$model_path"/*.rknn 2>/dev/null)" ]]; then
-            echo -e "${RED}Model files not found for $model_name!${NC}"
-            ((failed_tests++))
-            log_message "$model_name test skipped - Model files not found" "$log_file"
-            continue
-        fi
+    if [[ ! -e "$model_path" ]] && [[ ! -e "$model_path.rknn" ]] && [[ -z "$(ls "$model_path"/*.rknn 2>/dev/null)" ]]; then
+        echo -e "${RED}Model files not found for $model_name!${NC}"
+        ((failed_tests++))
+        log_message "$model_name test skipped - Model files not found" "$log_file"
+        continue
+    fi
 
-        local report_flag=0
-        if [[ "$generate_report" == true ]]; then
-            report_flag=1
-        fi
+    local report_flag=0
+    if [[ "$generate_report" == true ]]; then
+        report_flag=1
+    fi
 
-        local test_result
-        if [[ "$model_type" == "llm" ]]; then
-            test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "$llm_seq_len" "$llm_new_tokens" "$TEST_DURATION" "$log_file" "$report_flag"
-        else
-            test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "512" "512" "$TEST_DURATION" "$log_file" "$report_flag"
-        fi
+    # 执行测试并捕获返回值
+    local test_result
+    if [[ "$model_type" == "llm" ]]; then
+        test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "$llm_seq_len" "$llm_new_tokens" "$TEST_DURATION" "$log_file" "$report_flag"
+        test_result=$?
+    else
+        test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "512" "512" "$TEST_DURATION" "$log_file" "$report_flag"
+        test_result=$?
+    fi
 
-        sleep 2
-    done
+    # 根据测试结果更新计数器
+    if [ $test_result -eq 0 ]; then
+        ((successful_tests++))
+        echo -e "${GREEN}Model $model_name test completed successfully${NC}"
+        log_message "$model_name test result: SUCCESS" "$log_file"
+    else
+        ((failed_tests++))
+        echo -e "${RED}Model $model_name test failed with exit code: $test_result${NC}"
+        log_message "$model_name test result: FAILED (Exit code: $test_result)" "$log_file"
+    fi
+
+    # 实时显示当前进度
+    echo
+    echo -e "${CYAN}Current progress: $current_model/$total_models models tested${NC}"
+    echo -e "${GREEN}Successful: $successful_tests${NC}"
+    echo -e "${RED}Failed: $failed_tests${NC}"
+    echo
+
+    sleep 2
+done
 
     echo
     echo -e "${BLUE}========================================${NC}"
