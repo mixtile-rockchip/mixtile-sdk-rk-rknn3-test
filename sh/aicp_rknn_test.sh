@@ -338,14 +338,14 @@ test_model() {
             ;;
         "cnn")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC} $IS_YUV"
+            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC} $IS_YUV${NC}"
             echo
             ./rknn3_cnn_test.sh "$model_path" "$TEST_DURATION" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE" "$IS_YUV"
             test_result=$?
             ;;
         "vlm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC} $IS_YUV"
+            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC} $IS_YUV${NC}"
             echo
             ./rknn3_vlm_test.sh "$model_path" "$TEST_DURATION" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE" "$IS_YUV"
             test_result=$?
