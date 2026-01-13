@@ -114,6 +114,7 @@ validate_number_input() {
             "DEVICES_ID") DEVICES_ID="$input" ;;
             "SEQ_LEN") SEQ_LEN="$input" ;;
             "NEW_TOKENS") NEW_TOKENS="$input" ;;
+            "TEST_DURATION") TEST_DURATION="$input" ;;
         esac
 
         break
@@ -296,11 +297,13 @@ test_model() {
     show_test_start "$model_type" "$model_name" "$log_file"
     echo "Executing ${model_name} model test in foreground..."
 
+    # Get user input
     get_loop
-    get_test_duration
+    get_test_duration  # 获取测试时长
     get_devices_id
     get_devices_core
     echo "Number of loops: $LOOP"
+    echo "Test duration: $TEST_DURATION hours"  # 添加测试时长显示
     echo "Device ID: $DEVICES_ID"
     echo "Device core: $DEVICES_CORE"
 
@@ -321,23 +324,23 @@ test_model() {
     case "$model_type" in
         "llm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_llm_test.sh $model_path/$model_name $seq_len $new_tokens 0 $LOOP $DEVICES_ID $DEVICES_CORE${NC}"
+            echo -e "${GREEN}./rknn3_llm_test.sh $model_path $seq_len $new_tokens $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC}"
             echo
-            ./rknn3_llm_test.sh $model_path/$model_name $seq_len $new_tokens 0 $LOOP $DEVICES_ID $DEVICES_CORE
+            ./rknn3_llm_test.sh "$model_path" "$seq_len" "$new_tokens" "$TEST_DURATION" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE"
             test_result=$?
             ;;
         "cnn")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path/$model_name 0 $LOOP $DEVICES_ID $DEVICES_CORE${NC}"
+            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC}"
             echo
-            ./rknn3_cnn_test.sh $model_path/$model_name 0 $LOOP $DEVICES_ID $DEVICES_CORE
+            ./rknn3_cnn_test.sh "$model_path" "$TEST_DURATION" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE"
             test_result=$?
             ;;
         "vlm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path/$model_name 0 $LOOP $DEVICES_ID $DEVICES_CORE${NC}"
+            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC}"
             echo
-            ./rknn3_vlm_test.sh $model_path/$model_name 0 $LOOP $DEVICES_ID $DEVICES_CORE
+            ./rknn3_vlm_test.sh "$model_path" "$TEST_DURATION" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE"
             test_result=$?
             ;;
         *)
@@ -350,7 +353,12 @@ test_model() {
 
     if [ $test_result -eq 0 ]; then
         show_test_result 0 "$model_name" "$log_file"
-        log_message "$model_name test completed - Loops: $LOOP, Device ID: $DEVICES_ID, Device Core: $DEVICES_CORE, Seq Len: $seq_len, New Tokens: $new_tokens" "$log_file"
+        # 更新日志记录，包含测试时长信息
+        if [[ "$model_type" == "llm" ]]; then
+            log_message "$model_name test completed - Loops: $LOOP, Duration: ${TEST_DURATION}h, Device ID: $DEVICES_ID, Device Core: $DEVICES_CORE, Seq Len: $seq_len, New Tokens: $new_tokens" "$log_file"
+        else
+            log_message "$model_name test completed - Loops: $LOOP, Duration: ${TEST_DURATION}h, Device ID: $DEVICES_ID, Device Core: $DEVICES_CORE" "$log_file"
+        fi
     else
         show_test_result 1 "$model_name" "$log_file"
         log_message "$model_name test failed - Exit code: $test_result" "$log_file"
