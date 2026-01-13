@@ -16,7 +16,7 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     echo "RKNN3 CNN Demo Multiple Device/Core Stress Test Tool"
     echo "==========================================="
     echo "Usage:"
-    echo "  $0 <model_path> <loop_time_hours> <count_loop> <device_list> <core_list> [save_result]"
+    echo "  $0 <model_path> <loop_time_hours> <count_loop> <device_list> <core_list> [use_yuv] [save_result]"
     echo ""
     echo "Parameters:"
     echo "  model_path       Model file base path or directory (before .rknn extension)"
@@ -24,6 +24,7 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     echo "  count_loop       Inference loop count"
     echo "  device_list      Device ID list (space-separated), e.g., '0 1' for devices 0 and 1"
     echo "  core_list        Core list (space-separated), e.g., '1 2 3 4' for cores 1-4"
+    echo "  use_yuv          Use YUV input format (optional): 1=enable, 0=disable, default: 0"
     echo "  save_result      Save result to file (optional): 1=save, 0=no save, default: 0"
     echo ""
     echo "Environment Variables:"
@@ -31,11 +32,14 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     echo "                    Set to 'false' to keep logs for debugging"
     echo ""
     echo "Usage examples:"
-    echo "  # Without saving results (default)"
+    echo "  # RGB input, no save (default)"
     echo "  $0 mobilenet_v2 1 100 \"0 1\" \"1 2 3 4\""
     echo ""
-    echo "  # With saving results to test_results/performance/cnn.log"
+    echo "  # YUV input with hardware acceleration"
     echo "  $0 mobilenet_v2 1 100 \"0 1\" \"1 2 3 4\" 1"
+    echo ""
+    echo "  # YUV input and save results to test_results/performance/cnn.log"
+    echo "  $0 mobilenet_v2 1 100 \"0 1\" \"1 2 3 4\" 1 1"
     echo ""
     echo "  # Keep all logs for debugging"
     echo "  CLEANUP_TEMP_LOG=false $0 mobilenet_v2 1 100 \"0\" \"1 2\""
@@ -56,14 +60,15 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     exit 1
 fi
 
-[ $# -lt 5 ] && { echo "Usage: $0 <model_path> <loop_time_hours> <count_loop> <device_list> <core_list> [save_result]"; exit 1; }
+[ $# -lt 5 ] && { echo "Usage: $0 <model_path> <loop_time_hours> <count_loop> <device_list> <core_list> [use_yuv] [save_result]"; exit 1; }
 
 model=$1
 time_loop=$2
 cnt_loop=$3
 device_list=$4
 core_list=$5
-save_result="${6:-0}"  # Default: 0 (no save)
+use_yuv="${6:-0}"      # Default: 0 (RGB input)
+save_result="${7:-0}"  # Default: 0 (no save)
 
 # Ensure absolute path and safely handle dirname
 model_path_dir=$(dirname "$model")
@@ -118,6 +123,7 @@ echo "Loop time: ${time_loop} hours"
 echo "Loop count: ${cnt_loop}"
 echo "Device list: ${device_list}"
 echo "Core list: ${core_list}"
+echo "Input format: $([ "$use_yuv" == "1" ] && echo "YUV enabled" || echo "RGB")"
 echo "Save result: ${save_result}"
 echo "Cleanup temp log: ${CLEANUP_TEMP_LOG}"
 echo "==========================================="
@@ -135,9 +141,9 @@ for device_id in $device_list; do
 
         echo ">>> Starting device ${device_id}, core ${core} (mask: ${core_mask})"
 
-        # Call rknn3_cnn_test.sh with user-specified save_result parameter
+        # Call rknn3_cnn_test.sh with user-specified use_yuv and save_result parameters
         # Pass CLEANUP_TEMP_LOG environment variable to child process
-        CLEANUP_TEMP_LOG="$CLEANUP_TEMP_LOG" "$CNN_TEST_SCRIPT" "$model" "$time_loop" "$cnt_loop" "$device_id" "$core_mask" "$save_result" &
+        CLEANUP_TEMP_LOG="$CLEANUP_TEMP_LOG" "$CNN_TEST_SCRIPT" "$model" "$time_loop" "$cnt_loop" "$device_id" "$core_mask" "$use_yuv" "$save_result" &
         pids+=($!)
     done
 done

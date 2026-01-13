@@ -533,11 +533,24 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         float avgCost = total_time / infer_cnt;
         float avgFPS = 1000.f / avgCost;
 
-        // printf("\n---------------- Final Result ----------------\n");
+        printf("\n---------------- Final Result ----------------\n");
         if (vision_ctx->device_id_mac) {
-            printf("device_id: %s\n", vision_ctx->device_id_mac);
+            printf("DeviceId: %s\n", vision_ctx->device_id_mac);
         }
-        printf("run %d ,tot_time:%8.2f,avgFPS: %.3f ,avgCost: %8.2f ms\n", infer_cnt, total_time, avgFPS, avgCost);
+
+        // Output input format based on actual img->format
+        if (img->format == IMAGE_FORMAT_YUV420SP_NV12 || img->format == IMAGE_FORMAT_YUV420SP_NV21) {
+            printf("InputFormat: YUV420SP_NV12\n");
+        } else if (img->format == IMAGE_FORMAT_RGB888) {
+            printf("InputFormat: RGB888\n");
+        } else {
+            printf("InputFormat: unknown\n");
+        }
+
+        printf("RunCount: %d\n", infer_cnt);
+        printf("TotalTime: %.2f ms\n", total_time);
+        printf("AvgFPS: %.3f\n", avgFPS);
+        printf("AvgCost: %.2f ms\n", avgCost);
 
         // printf("Run Count: %d, Tot Time: %8.2f ms\n", infer_cnt, total_time);
         // printf("Avg FPS  : %.2f, Avg Cost : %8.2f ms\n", avgFPS, avgCost);

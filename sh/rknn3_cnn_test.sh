@@ -20,7 +20,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "RKNN3 CNN Demo Stress Test Tool"
     echo "==========================================="
     echo "Usage:"
-    echo "  $0 <model_path> <loop_time_hours> <count_loop> <device_id> [core_mask] [save_result]"
+    echo "  $0 <model_path> <loop_time_hours> <count_loop> <device_id> [core_mask] [use_yuv] [save_result]"
     echo ""
     echo "Parameters:"
     echo "  model_path       Model file base path (before .rknn extension)"
@@ -28,6 +28,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "  count_loop       Inference loop count"
     echo "  device_id        Device ID (typically 0)"
     echo "  core_mask        Core mask (optional, hex), e.g., '0xff' for all 8 cores, '0x0f' for cores 0-3, default: 0x01"
+    echo "  use_yuv          Use YUV input format (optional): 1=enable, 0=disable, default: 0"
     echo "  save_result      Save result to file (optional): 1=save, 0=no save, default: 1"
     echo ""
     echo "Core mask examples:"
@@ -39,18 +40,25 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "Usage example:"
     echo "  $0 mobilenet_v2 1 100 0 0x01"
     echo ""
+    echo "  # YUV input (hardware accelerated)"
+    echo "  $0 mobilenet_v2 1 100 0 0x01 1"
+    echo ""
+    echo "  # YUV input without saving results"
+    echo "  $0 mobilenet_v2 1 100 0 0x01 1 0"
+    echo ""
     echo "==========================================="
     exit 1
 fi
 
-[ $# -lt 4 ] && { echo "Usage: $0 <model_path> <loop_time_hours> <count_loop> <device_id> [core_mask] [save_result]"; exit 1; }
+[ $# -lt 4 ] && { echo "Usage: $0 <model_path> <loop_time_hours> <count_loop> <device_id> [core_mask] [use_yuv] [save_result]"; exit 1; }
 
 MODEL=$1
 TIME_LOOP=$2
 COUNT_LOOP=$3
 DEVICE_ID=$4
 CORE_MASK="${5:-0x01}"  # Default: single core
-SAVE_RESULT="${6:-1}"   # Default: save to file
+USE_YUV="${6:-0}"       # Default: RGB input (0=RGB, 1=YUV)
+SAVE_RESULT="${7:-1}"   # Default: save to file
 
 # Ensure absolute path and safely handle dirname
 model_path_dir=$(dirname "$MODEL")
@@ -115,24 +123,32 @@ echo "Loop time: ${TIME_LOOP} hours"
 echo "Loop count: ${COUNT_LOOP}"
 echo "Device ID: ${DEVICE_ID}"
 echo "Core mask: ${CORE_MASK}"
+echo "Input format: $([ "$USE_YUV" == "1" ] && echo "YUV enabled" || echo "RGB")"
 
 current_log="${log_pre}_${model_dirname}_${start_time}_device${DEVICE_ID}_${CORE_MASK}.log"
 log_files+=("$current_log")
 
-# Build complete command
-cmd="rknn3_cnn_demo -m \"$RKNN_MODEL\" -w \"$WEIGHT_MODEL\" -c \"$CORE_MASK\" -i \"$IMG_PATH\" -tl \"${TIME_LOOP}\" -id \"${DEVICE_ID}\" -cl \"${COUNT_LOOP}\""
+# Build command with base arguments
+CMD_ARGS=(
+    "-m" "$RKNN_MODEL"
+    "-w" "$WEIGHT_MODEL"
+    "-c" "$CORE_MASK"
+    "-i" "$IMG_PATH"
+    "-tl" "${TIME_LOOP}"
+    "-id" "${DEVICE_ID}"
+    "-cl" "${COUNT_LOOP}"
+)
+
+# Add optional flags
+if [ "$USE_YUV" == "1" ]; then
+    CMD_ARGS+=("--yuv")
+fi
 
 # Output executed command
-echo ">>> Executing command: $cmd > $current_log"
+echo ">>> Executing command: rknn3_cnn_demo ${CMD_ARGS[*]} > $current_log"
 
-rknn3_cnn_demo \
-    -m "$RKNN_MODEL" \
-    -w "$WEIGHT_MODEL" \
-    -c "$CORE_MASK" \
-    -i "$IMG_PATH" \
-    -tl "${TIME_LOOP}" \
-    -id "${DEVICE_ID}" \
-    -cl "${COUNT_LOOP}" >"$current_log" 2>&1 &
+# Execute command
+rknn3_cnn_demo "${CMD_ARGS[@]}" >"$current_log" 2>&1 &
 pids+=($!)
 echo "Waiting for all processes to complete..."
 for pid in "${pids[@]}"; do wait "$pid"; done
@@ -160,10 +176,6 @@ for log in "${log_files[@]}"; do
         continue
     fi
 
-    # Get device ID MAC
-    device_id_line=$(grep 'device_id' "$log" 2>/dev/null | tail -n 1)
-    device_id_mac=$(echo "$device_id_line" | awk -F': ' '{print $2}')
-
     # Check if completed successfully
     if ! grep -q "rknn3_model_stress_test_done" "$log"; then
         echo "  [ERROR] Abnormal"
@@ -172,17 +184,19 @@ for log in "${log_files[@]}"; do
         continue
     fi
 
-    fps_line=$(grep 'avgFPS' "$log" 2>/dev/null | tail -n 1)
-    if [[ -z "$fps_line" ]]; then
+    # Parse results in unified Key: Value format (similar to LLM test)
+    device_id_mac=$(grep '^DeviceId:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+    run_cnt=$(grep '^RunCount:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+    tot_time=$(grep '^TotalTime:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}' | sed 's/ ms$//')
+    fps=$(grep '^AvgFPS:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+    avg_cost=$(grep '^AvgCost:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}' | sed 's/ ms$//')
+    input_format=$(grep '^InputFormat:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+
+    if [[ -z "$fps" ]]; then
         echo "  No FPS information"
         error_found=1
         continue
     fi
-
-    fps=$(echo "$fps_line" | awk -F'avgFPS:' '{print $NF}' | awk '{print $1}')
-    run_cnt=$(echo "$fps_line" | awk '{print $2}')
-    tot_time=$(echo "$fps_line" | awk -F'tot_time:' '{print $2}' | awk -F',' '{print $1}')
-    avg_cost=$(echo "$fps_line" | awk -F'avgCost:' '{print $NF}' | awk '{print $1}')
 
     # Extract input resolution information (model input)
     input_res_line=$(grep 'input image height' "$log" 2>/dev/null | tail -n 1)
@@ -238,6 +252,7 @@ APPEND_CONTENT=$(cat <<EOF
 cnn:
 model: ${model_name}
 core: ${CORE_MASK}
+input_format: ${input_format}
 input_width: ${input_width}
 input_height: ${input_height}
 input_channel: ${input_channel}
