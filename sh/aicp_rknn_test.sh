@@ -25,6 +25,7 @@ DEVICES_CORE=0xff
 SEQ_LEN=512
 NEW_TOKENS=512
 TEST_DURATION=0
+IS_YUV=0
 
 # ============================================================================
 # Core utility functions
@@ -115,6 +116,7 @@ validate_number_input() {
             "SEQ_LEN") SEQ_LEN="$input" ;;
             "NEW_TOKENS") NEW_TOKENS="$input" ;;
             "TEST_DURATION") TEST_DURATION="$input" ;;
+            "IS_YUV") IS_YUV="$input" ;;
         esac
 
         break
@@ -161,6 +163,10 @@ get_loop() {
 
 get_test_duration() {
     validate_number_input "Enter test duration in hours: " "TEST_DURATION" 0 999999
+}
+
+get_is_yuv() {
+    validate_number_input "Enter test Whether to use yuv data(1 is use yuv, 0 is default rgb): " "IS_YUV" 0 999999
 }
 
 get_devices_id() {
@@ -300,6 +306,7 @@ test_model() {
     # Get user input
     get_loop
     get_test_duration  # 获取测试时长
+    get_is_yuv
     get_devices_id
     get_devices_core
     echo "Number of loops: $LOOP"
@@ -324,23 +331,23 @@ test_model() {
     case "$model_type" in
         "llm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_llm_test.sh $model_path $seq_len $new_tokens $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC}"
+            echo -e "${GREEN}./rknn3_llm_test.sh $model_path $seq_len $new_tokens $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE $IS_YUV${NC}"
             echo
-            ./rknn3_llm_test.sh "$model_path" "$seq_len" "$new_tokens" "$TEST_DURATION" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE"
+            ./rknn3_llm_test.sh "$model_path" "$seq_len" "$new_tokens" "$TEST_DURATION" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE" "$IS_YUV"
             test_result=$?
             ;;
         "cnn")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC}"
+            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC} $IS_YUV"
             echo
-            ./rknn3_cnn_test.sh "$model_path" "$TEST_DURATION" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE"
+            ./rknn3_cnn_test.sh "$model_path" "$TEST_DURATION" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE" "$IS_YUV"
             test_result=$?
             ;;
         "vlm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC}"
+            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path $TEST_DURATION $LOOP $DEVICES_ID $DEVICES_CORE${NC} $IS_YUV"
             echo
-            ./rknn3_vlm_test.sh "$model_path" "$TEST_DURATION" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE"
+            ./rknn3_vlm_test.sh "$model_path" "$TEST_DURATION" "$LOOP" "$DEVICES_ID" "$DEVICES_CORE" "$IS_YUV"
             test_result=$?
             ;;
         *)
@@ -378,7 +385,8 @@ test_model_with_params() {
     local new_tokens="$8"
     local test_duration="$9"
     local log_file="${10}"
-    local generate_report="${11:-0}"  # 添加第11个参数，默认为0
+    local is_yuv="${11}"
+    local generate_report="${12:-0}"
 
     show_test_start "$model_type" "$model_name" "$log_file"
     echo "Executing ${model_name} model test with parameters:"
@@ -395,21 +403,21 @@ test_model_with_params() {
     case "$model_type" in
         "llm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_llm_test.sh $model_path $seq_len $new_tokens $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
+            echo -e "${GREEN}./rknn3_llm_test.sh $model_path $seq_len $new_tokens $test_duration $loop_count $devices_id $devices_core $is_yuv $generate_report${NC}"
             echo
-            ./rknn3_llm_test.sh "$model_path" "$seq_len" "$new_tokens" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
+            ./rknn3_llm_test.sh "$model_path" "$seq_len" "$new_tokens" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$is_yuv" "$generate_report"
             ;;
         "cnn")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
+            echo -e "${GREEN}./rknn3_cnn_test.sh $model_path $test_duration $loop_count $devices_id $devices_core $is_yuv $generate_report${NC}"
             echo
-            ./rknn3_cnn_test.sh "$model_path" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
+            ./rknn3_cnn_test.sh "$model_path" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$is_yuv" "$generate_report"
             ;;
         "vlm")
             echo -e "${YELLOW}Command to execute:${NC}"
-            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path $test_duration $loop_count $devices_id $devices_core $generate_report${NC}"
+            echo -e "${GREEN}./rknn3_vlm_test.sh $model_path $test_duration $loop_count $devices_id $devices_core $is_yuv $generate_report${NC}"
             echo
-            ./rknn3_vlm_test.sh "$model_path" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$generate_report"
+            ./rknn3_vlm_test.sh "$model_path" "$test_duration" "$loop_count" "$devices_id" "$devices_core" "$is_yuv" "$generate_report"
             ;;
         *)
             echo -e "${RED}Unknown model type: $model_type${NC}"
@@ -1018,6 +1026,7 @@ loop_test_all_models() {
     echo -e "${CYAN}Setting test parameters for all models:${NC}"
     get_loop
     get_test_duration
+    get_is_yuv
     get_devices_id
     echo "Note: Device core will be set automatically based on model type (0x01 for CNN, 0xff for LLM/VLM)"
 
@@ -1122,10 +1131,10 @@ for index in $(echo "${!all_models[@]}" | tr ' ' '\n' | sort -n); do
     # 执行测试并捕获返回值
     local test_result
     if [[ "$model_type" == "llm" ]]; then
-        test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "$llm_seq_len" "$llm_new_tokens" "$TEST_DURATION" "$log_file" "$report_flag"
+        test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "$llm_seq_len" "$llm_new_tokens" "$TEST_DURATION" "$log_file" "$IS_YUV" "$report_flag"
         test_result=$?
     else
-        test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "512" "512" "$TEST_DURATION" "$log_file" "$report_flag"
+        test_model_with_params "$model_name" "$model_type" "$model_path" "$LOOP" "$DEVICES_ID" "$devices_core" "512" "512" "$TEST_DURATION" "$log_file" "$IS_YUV" "$report_flag"
         test_result=$?
     fi
 
