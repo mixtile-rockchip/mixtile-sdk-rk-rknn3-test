@@ -381,6 +381,7 @@ int main(int argc, char **argv) {
     rknn_app_ctx.vision.model_height = pruned_model_height;
     rknn_app_ctx.vision.device_id = device_id;
     rknn_app_ctx.llm.device_id = device_id;
+    rknn_app_ctx.device_id = device_id;  // Save for memory monitoring
 
     // printf("rknn_app_ctx.vision.model_width:%d\n",rknn_app_ctx.vision.model_width);
     // printf("==================================rknn_app_ctx.llm.system_prompt: %s,system_prompt:%s\n",rknn_app_ctx.llm.system_prompt,system_prompt);
@@ -453,13 +454,12 @@ int main(int argc, char **argv) {
             }
         }
         printf("\n===== RKNN3_VLM_TEST Results Summary =====\n\n");
-        printf("Model: %s\n", model_name);
-        printf("DeviceID: %s\n", rknn_app_ctx.llm.device_mac);
-        printf("TotalTime: %.3f ms\n", infer_cost_time.get_time());
-        printf("TotalRuns: %d\n", infer_loop_cnt);
+        printf("Model: %s\n",model_name);
+        printf("DeviceID: %s\n",rknn_app_ctx.llm.device_mac);
+        printf("TotalTime: %.3f ms\n",infer_cost_time.get_time());
+        printf("TotalRuns: %d\n",infer_loop_cnt);
         printf("\n=================================\n");
-
-
+        printf("[rknn3_model_stress_test_done]\n");
     }
 
 

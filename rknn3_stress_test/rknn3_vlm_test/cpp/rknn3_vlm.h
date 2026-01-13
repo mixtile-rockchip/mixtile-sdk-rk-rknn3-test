@@ -34,9 +34,10 @@ typedef struct {
     rknn3_vlm_vision_context vision;
     int n_internal_mems;
     rknn3_tensor_mem** internal_mems;
+    uint32_t device_id;  // Device ID for memory monitoring
 } rknn_app_context_t;
 
-int init_rknn3_vlm_model(rknn_app_context_t* app_ctx, const char* llm_model_path, const char* llm_weight_path, const char* vision_model_path, const char* vision_weight_path, 
+int init_rknn3_vlm_model(rknn_app_context_t* app_ctx, const char* llm_model_path, const char* llm_weight_path, const char* vision_model_path, const char* vision_weight_path,
                         rknn3_llm_param* params, int n_params, RKLLMCallback callback, uint32_t vision_core_mask, uint32_t llm_core_mask);
 
 int release_rknn3_vlm_model(rknn_app_context_t* app_ctx);

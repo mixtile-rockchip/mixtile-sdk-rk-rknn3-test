@@ -185,6 +185,8 @@ for log in "${log_files[@]}"; do
     max_lat=$(grep '^MaxLatency:' "$log" 2>/dev/null | tail -n 1 | awk '{print $2}')
     tot_time=$(grep '^TotalTime:' "$log" 2>/dev/null | tail -n 1 | awk '{print $2}')
     run_cnt=$(grep '^TotalRuns:' "$log" 2>/dev/null | tail -n 1 | awk '{print $2}')
+    avg_memory=$(grep '^AvgMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+    avg_npu_util=$(grep '^AvgNpuUtilization:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
 
 done
 
@@ -196,6 +198,8 @@ echo "  [$model_name] Total time: $tot_time ms"
 echo "  [$model_name] Average latency: $avgCost ms"
 echo "  [$model_name] Min latency: $min_lat ms"
 echo "  [$model_name] Max latency: $max_lat ms"
+echo "  [$model_name] Avg Memory Usage: $avg_memory"
+echo "  [$model_name] Avg NPU Utilization: $avg_npu_util"
 
 if [ $error_found -eq 0 ]; then
     echo "  Status: [PASS]"
@@ -220,6 +224,8 @@ total_time: ${tot_time} ms
 avg_latency: ${avgCost} ms
 min_latency: ${min_lat} ms
 max_latency: ${max_lat} ms
+avg_memory_usage: ${avg_memory}
+avg_npu_utilization: ${avg_npu_util}
 EOF
 )
 

@@ -164,6 +164,11 @@ tot_time=0
 avg_cost=0
 run_cnt=0
 device_id_mac=""
+device_memory=""
+avg_memory=""
+min_memory=""
+max_memory=""
+npu_util=""
 
 echo ""
 echo "--- Device ${DEVICE_ID} Statistics ---"
@@ -191,6 +196,8 @@ for log in "${log_files[@]}"; do
     fps=$(grep '^AvgFPS:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
     avg_cost=$(grep '^AvgCost:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}' | sed 's/ ms$//')
     input_format=$(grep '^InputFormat:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+    avg_memory=$(grep '^AvgMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+    avg_npu_util=$(grep '^AvgNpuUtilization:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
 
     if [[ -z "$fps" ]]; then
         echo "  No FPS information"
@@ -227,6 +234,8 @@ echo "  [$model_name] Total frames: $total_frames"
 echo "  [$model_name] Total time: $tot_time ms"
 echo "  [$model_name] Average cost: $avg_cost ms"
 echo "  [$model_name] Total FPS: $total_fps"
+echo "  [$model_name] Avg Memory Usage: $avg_memory"
+echo "  [$model_name] Avg NPU Utilization: $avg_npu_util"
 
 if [ $error_found -eq 0 ]; then
     echo "  Status: [PASS]"
@@ -260,6 +269,8 @@ total_frames: ${total_frames}
 total_time: ${tot_time} ms
 fps: ${total_fps}
 avg_cost: ${avg_cost} ms
+avg_memory_usage: ${avg_memory}
+avg_npu_utilization: ${avg_npu_util}
 EOF
 )
 

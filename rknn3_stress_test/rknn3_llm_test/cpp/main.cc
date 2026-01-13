@@ -6,13 +6,13 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 #include <unistd.h>
 
 #include "Tokenizer.h"
 #include "float16.h"
 #include "rknn3_api.h"
 #include "easy_timer.h"
+#include "MemoryMonitor.h"
 
 #define LOGW(fmt, ...) printf("\033[33m" fmt "\033[0m", ##__VA_ARGS__)
 
@@ -20,6 +20,43 @@ rknn3_session *session = nullptr;
 
 // struct timeval start, first_token, end;
 TIMER first_token, decode_time_ms;
+
+// 内存监控器实例
+MemoryMonitor* memory_monitor = nullptr;
+
+// 打印内存统计数据
+void print_memory_statistics(const MemoryStatistics& stats) {
+    if (!stats.is_valid) {
+        printf("[MemoryMonitor] No valid statistics available\n");
+        return;
+    }
+
+    printf("\n===== Memory Usage Statistics =====\n");
+    printf("Total monitoring duration: %.3f seconds\n", stats.total_duration_seconds);
+    printf("Total samples collected: %u\n\n", stats.total_samples);
+
+    for (const DeviceMemoryStats& dev : stats.devices) {
+        printf("Device[%d] Chip[%d] Statistics:\n", dev.device_id, dev.chip_id);
+        printf("  Total Memory: %.2f MB\n", dev.total_memory / 1024.0f / 1024.0f);
+        printf("  Memory Usage:\n");
+        printf("    Peak:    %.2f MB (%.1f%%)\n",
+               dev.peak_used_memory / 1024.0f / 1024.0f, dev.peak_usage_percent);
+        printf("    Average: %.2f MB (%.1f%%)\n",
+               dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
+        printf("    Min:     %.2f MB (%.1f%%)\n",
+               dev.min_used_memory / 1024.0f / 1024.0f, dev.min_usage_percent);
+        printf("  Free Memory:\n");
+        printf("    Min:     %.2f MB\n", dev.min_free_memory / 1024.0f / 1024.0f);
+        printf("    Average: %.2f MB\n", dev.avg_free_memory / 1024.0f / 1024.0f);
+        printf("    Max:     %.2f MB\n", dev.max_free_memory / 1024.0f / 1024.0f);
+        printf("  DDR Frequency:\n");
+        printf("    Max: %u MHz, Avg: %u MHz, Min: %u MHz\n",
+               dev.max_ddr_freq, dev.avg_ddr_freq, dev.min_ddr_freq);
+        printf("  Sample count: %u (%.3f seconds)\n\n",
+               dev.sample_count, dev.duration_seconds);
+    }
+    printf("===================================\n\n");
+}
 // struct timeval decode, decode_tmp;
 
 static bool first_decode = true;
@@ -321,7 +358,7 @@ int main(int argc, char **argv) {
     const char *tokenizer_path =  NULL;
     const char *embedding_path =  NULL;
     // const char *device_id = NULL;
-    int32_t max_context_len =  NULL;
+    int32_t max_context_len = 0;
     uint64_t n_input_tokens = 128;
     int32_t max_new_tokens = 128;
     uint32_t core_mask = 0xff;
@@ -383,6 +420,9 @@ int main(int argc, char **argv) {
     // float ttft_us = 0.0f;
     int prefill_n_tokens = 0;
     float prefill_per_second = 0.f;
+
+    // Save memory statistics before monitor is deleted
+    MemoryStatistics saved_mem_stats;
     // float decode_time_us = 0.f;
     float tpot = 0.f;
     float tps = 0.f;
@@ -427,6 +467,22 @@ int main(int argc, char **argv) {
     }
 
     printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
+
+    // 初始化内存监控器（提前到模型加载前，便于诊断内存问题）
+    memory_monitor = new MemoryMonitor(100000); // 100ms监控间隔
+
+    // 设置目标设备（只监控推理使用的设备）
+    std::vector<uint16_t> target_devices = {(uint16_t)device_id};
+    memory_monitor->set_target_devices(target_devices);
+
+    if (!memory_monitor->initialize()) {
+        printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
+        delete memory_monitor;
+        memory_monitor = nullptr;
+    } else {
+        memory_monitor->set_realtime_print(false);
+        printf("[rknn3_model_stress_test] Memory monitor initialized successfully with 100ms interval\n");
+    }
 
     rknn3_init_extend init_extend = {0};
     init_extend.device_id = rknn3_devices.devices[device_id].id;
@@ -500,6 +556,11 @@ int main(int argc, char **argv) {
     llm_inputs[0] = input;
 
     cost_time.tik();
+
+    if (memory_monitor) {
+        memory_monitor->start_monitoring();
+    }
+
     while (true) {
         // 1. 记录单次推理开始时间 (用于 TTFT 和基础计时)
         // gettimeofday(&start, NULL);
@@ -508,7 +569,7 @@ int main(int argc, char **argv) {
         first_token.tik();
         first_decode = true;
 
-        // 2. 执行模型推理
+
         ret = rknn3_session_run(session, llm_inputs, llm_n_inputs, &llm_infer_param);
         if (ret != RKNN3_SUCCESS) {
             printf("[rknn3_model_stress_test_error] rknn3_session_run failed, ret=%d\n", ret);
@@ -571,6 +632,10 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (memory_monitor) {
+        memory_monitor->stop_monitoring();
+    }
+
     ret = rknn3_session_query_state(session, &state);
     // if (ret == RKNN3_SUCCESS) {
 
@@ -582,8 +647,14 @@ int main(int argc, char **argv) {
         goto exit;
     }
 
+    if (memory_monitor) {
+        saved_mem_stats = memory_monitor->get_statistics();
+        print_memory_statistics(saved_mem_stats);
+    }
 
 exit:
+    // Save memory statistics before cleanup
+
     if (session) {
         rknn3_session_destroy(session);
     }
@@ -654,11 +725,30 @@ exit:
         printf("TPS: %.3f tokens/s\n", tps);
         printf("TotalTime: %.3f ms\n",infer_total_time);
         printf("TotalRuns: %d\n",iter);
+
+        // Print memory usage statistics (use saved data from exit section)
+        bool has_valid_data = saved_mem_stats.is_valid && !saved_mem_stats.devices.empty();
+        if (has_valid_data) {
+            const DeviceMemoryStats& dev = saved_mem_stats.devices[0];
+            printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
+                   dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
+            printf("AvgNpuUtilization: %u%%\n", dev.avg_npu_util);
+        } else {
+            printf("AvgMemoryUsage: unavailable\n");
+            printf("AvgNpuUtilization: unavailable\n");
+        }
+
         printf("\n=================================\n");
-        // printf("rknn3_llm_test loop: %d,total_time:%8.2f ms\n", iter,infer_total_time);
-        // printf("[rknn3_model_stress_test_done]\n");
+        printf("[rknn3_model_stress_test_done]\n");
     }
     fflush(stdout);
+
+    // Print detailed memory statistics and cleanup
+    if (memory_monitor) {
+        delete memory_monitor;
+        memory_monitor = nullptr;
+        printf("[rknn3_model_stress_test] Memory monitor deinitialized\n");
+    }
 
     return 0;
 }

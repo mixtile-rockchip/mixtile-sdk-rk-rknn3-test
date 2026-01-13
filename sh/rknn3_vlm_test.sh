@@ -187,6 +187,8 @@ total_time=""
 total_runs=""
 input_width=""
 input_height=""
+avg_memory=""
+npu_util=""
 
 for log in "${log_files[@]}"; do
     echo "$log"
@@ -200,6 +202,8 @@ for log in "${log_files[@]}"; do
         tps=$(grep '^TPS:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
         total_time=$(grep '^TotalTime:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
         total_runs=$(grep '^TotalRuns:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+        avg_memory=$(grep '^AvgMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+        npu_util=$(grep '^AvgNpuUtilization:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
 
         # Extract vision model input resolution information
         model_size_line=$(grep 'model_width=' "$log" 2>/dev/null | tail -n 1)
@@ -240,6 +244,8 @@ TTFT: ${ttft}
 TPS: ${tps}
 TotalTime: ${total_time}
 TotalRuns: ${total_runs}
+AvgMemoryUsage: ${avg_memory}
+AvgNpuUtilization: ${npu_util}
 EOF
 )
 

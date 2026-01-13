@@ -18,6 +18,10 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../utils/ utils.out)
 
 set(CMAKE_INSTALL_RPATH "$ORIGIN/lib")
 
+set(PREBUILDS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../prebuilds)
+set(RKNNSMI_INCLUDE_DIR ${PREBUILDS_ROOT}/include)
+set(RKNNSMI_LIB_DIR ${PREBUILDS_ROOT}/lib)
+
 message(STATUS "LIBRKNNAPI = ${LIBRKNNAPI}")
 message(STATUS "LIBRKNNAPI_INCLUDES = ${LIBRKNNAPI_INCLUDES}")
 message(STATUS "TARGET_LIB_ARCH = ${TARGET_LIB_ARCH}")
@@ -26,12 +30,18 @@ add_executable(${PROJECT_NAME}
     main.cc
     rknn3_audio_encoder_test.cc
     audio/rknn3_audio_encoder.cc
+    ../../rknn3_test_monitor/MemoryMonitor.cpp
+)
+
+target_link_directories(${PROJECT_NAME} PRIVATE
+    ${RKNNSMI_LIB_DIR}
 )
 
 target_link_libraries(${PROJECT_NAME}
 	audioutils
     fileutils
     ${LIBRKNNAPI}
+    ${RKNNSMI_LIB_DIR}/librknnsmi.a
     dl
 )
 
@@ -51,8 +61,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/audio
     ${CMAKE_CURRENT_SOURCE_DIR}/llm
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../rknn3_test_monitor
     ${LIBRKNNAPI_INCLUDES}
     ${LIBTOKENIZER_INCLUDES}
+    ${RKNNSMI_INCLUDE_DIR}
 )
 
 install(TARGETS ${PROJECT_NAME} DESTINATION .)

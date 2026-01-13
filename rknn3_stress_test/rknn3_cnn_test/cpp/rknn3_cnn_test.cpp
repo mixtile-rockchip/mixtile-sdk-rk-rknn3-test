@@ -27,8 +27,10 @@
 #include "file_utils.h"
 #include "float16.h"
 #include "image_utils.h"
+#include "MemoryMonitor.h"
 
-static void dump_tensor_attr(rknn3_tensor_attr *attrs) {
+static void dump_tensor_attr(rknn3_tensor_attr* attrs)
+{
     std::string shape_str = "";
     for (int j = 0; j < attrs->n_dims; j++) {
         shape_str += std::to_string(attrs->shape[j]);
@@ -73,6 +75,7 @@ int init_common_img(rknn_common_img_ctx *vision_ctx, const char *model_path, con
         printf("warning!!! device_id = %d is not allow ,use default:%d, %s, %d\n", device_id, RKNN3_DEFAULT_DEVICE_ID, __FUNCTION__, __LINE__);
         device_id = RKNN3_DEFAULT_DEVICE_ID;
     }
+    vision_ctx->device_id = device_id;  // Save device_id for memory monitoring
     memcpy(vision_ctx->device_id_mac, rknn3_devices.devices[device_id].id, sizeof(rknn3_devices.devices[device_id].id));
     printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
 
@@ -410,6 +413,25 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         return -1;
     }
 
+    // Initialize memory monitor
+    MemoryMonitor* memory_monitor = new MemoryMonitor(50);
+
+    // Set target device(s) to monitor
+    // Currently monitoring only the device used for inference
+    // For multi-device scenarios, you can pass multiple device IDs: {0, 1, 2}
+    // Or pass empty vector {} to monitor all devices
+    std::vector<uint16_t> target_devices = {(uint16_t)vision_ctx->device_id};
+    memory_monitor->set_target_devices(target_devices);
+
+    if (!memory_monitor->initialize()) {
+        printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
+        delete memory_monitor;
+        memory_monitor = nullptr;
+    } else {
+        memory_monitor->set_realtime_print(false);
+        printf("[rknn3_model_stress_test] Memory monitor initialized successfully\n");
+    }
+
     int ret;
     image_buffer_t dst_img;
     memset(&dst_img, 0, sizeof(image_buffer_t));
@@ -476,6 +498,10 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         // printf("\n");
     }
 
+    if (memory_monitor) {
+        memory_monitor->start_monitoring();
+    }
+
     tot_cost.tik();
     while (1) {
         if (time_loop == 0.f && infer_cnt >= cnt_loop) {
@@ -511,7 +537,6 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         for (int i = 0; i < vision_ctx->io_num.n_output; i++) {
             rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
         }
-
         infer_cnt++;
         tot_cost.tok();
         float tmp_time = tot_cost.get_time();
@@ -527,6 +552,11 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
             }
         }
     }
+    // Stop memory monitoring
+    if (memory_monitor) {
+        memory_monitor->stop_monitoring();
+    }
+
     // 4. 统一最终统计输出
     {
         float total_time = tot_cost.get_time();
@@ -551,6 +581,23 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         printf("TotalTime: %.2f ms\n", total_time);
         printf("AvgFPS: %.3f\n", avgFPS);
         printf("AvgCost: %.2f ms\n", avgCost);
+
+        // Print memory statistics (average only)
+        if (memory_monitor) {
+            MemoryStatistics mem_stats = memory_monitor->get_statistics();
+            if (mem_stats.is_valid && !mem_stats.devices.empty()) {
+                const DeviceMemoryStats& dev = mem_stats.devices[0];
+                printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
+                       dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
+                printf("AvgNpuUtilization: %u%%\n", dev.avg_npu_util);
+            } else {
+                printf("AvgMemoryUsage: \n");
+                printf("AvgNpuUtilization: \n");
+            }
+        } else {
+            printf("AvgMemoryUsage: unavailable\n");
+            printf("AvgNpuUtilization: unavailable\n");
+        }
 
         // printf("Run Count: %d, Tot Time: %8.2f ms\n", infer_cnt, total_time);
         // printf("Avg FPS  : %.2f, Avg Cost : %8.2f ms\n", avgFPS, avgCost);
@@ -646,7 +693,14 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
     // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr,vision_ctx->outputs[0].mem->size);
 
 out:
-    if (dst_img.virt_addr != NULL) {
+    // Cleanup memory monitor
+    if (memory_monitor) {
+        delete memory_monitor;
+        memory_monitor = nullptr;
+    }
+
+    if (dst_img.virt_addr != NULL)
+    {
         free(dst_img.virt_addr);
     }
 

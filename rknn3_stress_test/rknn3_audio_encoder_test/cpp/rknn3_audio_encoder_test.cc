@@ -23,6 +23,7 @@
 #include "common.h"
 #include "rknn3_api.h"
 #include "audio_utils.h"
+#include "MemoryMonitor.h"
 #include <math.h>
 
 // Performance jitter check function
@@ -208,12 +209,24 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
 
     printf("Output: %d audio tokens x %d embedding dim\n", n_audio_tokens, embedding_dim);
 
+    // Initialize memory monitor
+    MemoryMonitor* memory_monitor = new MemoryMonitor(50);
+    std::vector<uint16_t> target_devices = {(uint16_t)app_ctx->audio.device_id};
+    memory_monitor->set_target_devices(target_devices);
+
+    if (!memory_monitor->initialize()) {
+        printf(RKNN3_AUDIO_ENC_WRN "Memory monitor initialization failed, monitoring disabled\n");
+        delete memory_monitor;
+        memory_monitor = nullptr;
+    }
+
     // Prepare audio input (preprocessing: mel filter, audio preprocess, mask creation, fp16 conversion)
     // This is done ONCE before the performance test loop
     ret = prepare_audio_input(&(app_ctx->audio), audio);
     if (ret != 0) {
         printf(RKNN3_AUDIO_ENC_ERR "Audio input preparation failed! ret=%d\n", ret);
         free(audio_embeds);
+        if (memory_monitor) delete memory_monitor;
         return ret;
     }
 
@@ -268,7 +281,13 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     if (ret != 0) {
         printf(RKNN3_AUDIO_ENC_ERR "Audio input sync failed! ret=%d\n", ret);
         free(audio_embeds);
+        if (memory_monitor) delete memory_monitor;
         return ret;
+    }
+
+    // Start memory monitoring
+    if (memory_monitor) {
+        memory_monitor->start_monitoring();
     }
 
     total_infer_timer.tik();
@@ -338,6 +357,11 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     float total_time = total_infer_timer.get_time();
     float avgCost = acc_audio_time / infer_cnt;
 
+    // Stop memory monitoring
+    if (memory_monitor) {
+        memory_monitor->stop_monitoring();
+    }
+
     // Sync output data from NPU and get embeddings (only for Option 2)
     #if HIDE_DATA_TRANSFER
     ret = sync_audio_output(&(app_ctx->audio));
@@ -364,6 +388,25 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     printf("MaxLatency: %.2f ms\n", max_time);
     printf("TotalTime: %.2f ms\n", total_time);
     printf("TotalRuns: %d\n", infer_cnt);
+
+    // Print memory statistics (average only)
+    if (memory_monitor) {
+        MemoryStatistics mem_stats = memory_monitor->get_statistics();
+        if (mem_stats.is_valid && !mem_stats.devices.empty()) {
+            const DeviceMemoryStats& dev = mem_stats.devices[0];
+            printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
+                   dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
+            printf("AvgNpuUtilization: %u%%\n", dev.avg_npu_util);
+        } else {
+            printf("AvgMemoryUsage: \n");
+            printf("AvgNpuUtilization: \n");
+        }
+        delete memory_monitor;
+    } else {
+        printf("AvgMemoryUsage: unavailable\n");
+        printf("AvgNpuUtilization: unavailable\n");
+    }
+
     printf("\n=================================\n");
 
     free(audio_embeds);

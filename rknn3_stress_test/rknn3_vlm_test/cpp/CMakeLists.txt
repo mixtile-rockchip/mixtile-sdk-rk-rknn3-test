@@ -16,6 +16,11 @@ endif ()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../rknn/rknn3-model-zoo/3rdparty/ 3rdparty.out)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../utils/ utils.out)
 
+# Use prebuilt static libraries (self-contained, no external dependencies)
+set(PREBUILDS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../prebuilds)
+set(RKNNSMI_INCLUDE_DIR ${PREBUILDS_ROOT}/include)
+set(RKNNSMI_LIB_DIR ${PREBUILDS_ROOT}/lib)
+
 set(CMAKE_INSTALL_RPATH "$ORIGIN/lib")
 
 file(GLOB SRCS ${CMAKE_CURRENT_SOURCE_DIR}/*.cc)
@@ -36,13 +41,28 @@ add_executable(${PROJECT_NAME}
     rknn3_ini.cc
     ${llm_file}
     ${vision_file}
+    ../../rknn3_test_monitor/MemoryMonitor.cpp
 )
 
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../rknn3_test_monitor
+    ${LIBRKNNAPI_INCLUDES}
+    ${LIBTOKENIZER_INCLUDES}
+    ${RKNNSMI_INCLUDE_DIR}
+)
+
+target_link_directories(${PROJECT_NAME} PRIVATE
+    ${RKNNSMI_LIB_DIR}
+)
+
+# Link with static librknnsmi.a (which includes chips_connect_rc_static and libpci)
 target_link_libraries(${PROJECT_NAME}
 	imageutils
     fileutils
     ${LIBRKNNAPI}
     ${LIBTOKENIZER}
+    ${RKNNSMI_LIB_DIR}/librknnsmi.a
     dl
 )
 
@@ -55,13 +75,8 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(${PROJECT_NAME}
         pthread
-)
+        atomic
+    )
 endif()
-
-target_include_directories(${PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${LIBRKNNAPI_INCLUDES}
-    ${LIBTOKENIZER_INCLUDES}
-)
 
 install(TARGETS ${PROJECT_NAME} DESTINATION .)

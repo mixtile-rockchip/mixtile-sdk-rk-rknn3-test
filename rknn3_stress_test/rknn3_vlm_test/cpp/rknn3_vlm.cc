@@ -19,6 +19,7 @@
 #include "rknn3_vlm.h"
 #include "common.h"
 #include "image_utils.h"
+#include "MemoryMonitor.h"
 // #include "rknn_api.h"
 #include <math.h>
 
@@ -317,6 +318,22 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
         printf("[rknn3_model_stress_test_error] app_ctx or img is NULL");
         return -1;
     }
+
+    // Initialize memory monitor
+    MemoryMonitor* memory_monitor = new MemoryMonitor(100000); // 100ms interval
+
+    // 设置目标设备（只监控推理使用的设备）
+    std::vector<uint16_t> target_devices = {(uint16_t)app_ctx->device_id};
+    memory_monitor->set_target_devices(target_devices);
+
+    if (!memory_monitor->initialize()) {
+        printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
+        delete memory_monitor;
+        memory_monitor = nullptr;
+    } else {
+        memory_monitor->set_realtime_print(false);
+        printf("[rknn3_model_stress_test] Memory monitor initialized successfully\n");
+    }
     static float last_vision_cost = 0.f;
     static float last_ttft = 0.f;
     static float last_tps = 0.f;
@@ -434,8 +451,12 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
     } else {
         infer_cost_time.tik();
         int iter = 0;
-
+        // Start memory monitoring
+        if (memory_monitor) {
+            memory_monitor->start_monitoring();
+        }
         while (true) {
+
             one_infer_time.tik();
             ret = inference_rknn3_vlm_vision(&(app_ctx->vision), img, 1);
             if (ret == 0) {
@@ -450,6 +471,8 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
 
                 ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs, 1);
             }
+
+
 
             if (ret != 0) {
                 printf("[rknn3_model_stress_test_error] inference fail! ret=%d\n", ret);
@@ -494,16 +517,45 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                     break;
             }
         }
+        // Stop memory monitoring
+        if (memory_monitor) {
+            memory_monitor->stop_monitoring();
+        }
     }
 
     #endif
 
     if(ret == 0) {
         printf("[rknn3_model_stress_test_done] rknn3_vlm_demo run done\n");
+        printf("\n===== RKNN3_VLM_TEST Results =====\n");
         printf("Vision: %.f ms\n", vision_cost.get_time());
         printf("GenLen: %d tokens\n", gen_tokens);
         printf("TTFT: %.3f ms\n", llm_perfill.get_time());
         printf("TPS: %.3f tokens/s\n", tps);
+
+        // Print memory statistics
+        if (memory_monitor) {
+            MemoryStatistics mem_stats = memory_monitor->get_statistics();
+            if (mem_stats.is_valid && !mem_stats.devices.empty()) {
+                const DeviceMemoryStats& dev = mem_stats.devices[0];
+                printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
+                       dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
+                printf("AvgNpuUtilization: %u%%\n", dev.avg_npu_util);
+            } else {
+                printf("AvgMemoryUsage: \n");
+                printf("AvgNpuUtilization: error\n");
+            }
+        } else {
+            printf("AvgMemoryUsage: unavailable\n");
+            printf("AvgNpuUtilization: unavailable\n");
+        }
+
+    }
+
+    // Cleanup memory monitor
+    if (memory_monitor) {
+        delete memory_monitor;
+        memory_monitor = nullptr;
     }
 
     return ret;
