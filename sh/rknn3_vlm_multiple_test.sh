@@ -16,7 +16,7 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     echo "RKNN3 VLM Multiple Device Test Tool"
     echo "==========================================="
     echo "Usage:"
-    echo "  $0 <model_dir> <loop_time> <loop_count> <device_list> <core_mask> [save_result]"
+    echo "  $0 <model_dir> <loop_time> <loop_count> <device_list> <core_mask> [use_yuv] [save_result]"
     echo ""
     echo "Parameters:"
     echo "  model_dir        Model directory path (e.g., /userdata/Qwen2.5-VL-3B)"
@@ -24,6 +24,7 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     echo "  loop_count       Inference loop count"
     echo "  device_list      Device ID list (space-separated), e.g., '0 1' for devices 0 and 1"
     echo "  core_mask        Core mask (hex), e.g., '0xff' for all 8 cores"
+    echo "  use_yuv          Use YUV format (optional, reserved parameter): 0=RGB, 1=YUV, default: 0"
     echo "  save_result      Save result to file (optional): 1=save, 0=no save, default: 0"
     echo ""
     echo "Core mask examples:"
@@ -58,14 +59,15 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     exit 1
 fi
 
-[ $# -lt 5 ] && { echo "Usage: $0 <model_dir> <loop_time> <loop_count> <device_list> <core_mask> [save_result]"; exit 1; }
+[ $# -lt 5 ] && { echo "Usage: $0 <model_dir> <loop_time> <loop_count> <device_list> <core_mask> [use_yuv] [save_result]"; exit 1; }
 
 MODEL_DIR="$1"
 LOOP_TIME="$2"
 LOOP_COUNT="$3"
 DEVICE_LIST="$4"
 CORE_MASK="$5"
-SAVE_RESULT="${6:-0}"  # Default: 0 (no save)
+USE_YUV="${6:-0}"      # Default: RGB (reserved parameter)
+SAVE_RESULT="${7:-0}"  # Default: 0 (no save)
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -100,7 +102,7 @@ for device_id in $DEVICE_LIST; do
 
     # Call rknn3_vlm_test.sh with specified parameters
     # Pass CLEANUP_TEMP_LOG environment variable to child process
-    CLEANUP_TEMP_LOG="$CLEANUP_TEMP_LOG" "$VLM_TEST_SCRIPT" "$MODEL_DIR" "$LOOP_TIME" "$LOOP_COUNT" "$device_id" "$CORE_MASK" "$SAVE_RESULT" &
+    CLEANUP_TEMP_LOG="$CLEANUP_TEMP_LOG" "$VLM_TEST_SCRIPT" "$MODEL_DIR" "$LOOP_TIME" "$LOOP_COUNT" "$device_id" "$CORE_MASK" "$USE_YUV" "$SAVE_RESULT" &
     pids+=($!)
 done
 

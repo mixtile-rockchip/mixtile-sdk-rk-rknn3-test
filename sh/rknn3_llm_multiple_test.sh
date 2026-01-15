@@ -16,7 +16,7 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     echo "RKNN3 LLM Multiple Device Test Tool"
     echo "==========================================="
     echo "Usage:"
-    echo "  $0 <model_dir> <seq_len> <new_tokens> <loop_time> <loop_count> <device_list> <core_mask> [save_result]"
+    echo "  $0 <model_dir> <seq_len> <new_tokens> <loop_time> <loop_count> <device_list> <core_mask> [use_yuv] [save_result]"
     echo ""
     echo "Parameters:"
     echo "  model_dir        Model directory path (e.g., /userdata/Qwen2.5-0.5B)"
@@ -26,6 +26,7 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     echo "  loop_count       Inference loop count"
     echo "  device_list      Device ID list (space-separated), e.g., '0 1' for devices 0 and 1"
     echo "  core_mask        Core mask (hex), e.g., '0xff' for all 8 cores"
+    echo "  use_yuv          Use YUV format (optional, reserved parameter): 0=RGB, 1=YUV, default: 0"
     echo "  save_result      Save result to file (optional): 1=save, 0=no save, default: 0"
     echo ""
     echo "Core mask examples:"
@@ -60,7 +61,7 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     exit 1
 fi
 
-[ $# -lt 7 ] && { echo "Usage: $0 <model_dir> <seq_len> <new_tokens> <loop_time> <loop_count> <device_list> <core_mask> [save_result]"; exit 1; }
+[ $# -lt 7 ] && { echo "Usage: $0 <model_dir> <seq_len> <new_tokens> <loop_time> <loop_count> <device_list> <core_mask> [use_yuv] [save_result]"; exit 1; }
 
 MODEL_DIR="$1"
 SEQ_LEN="$2"
@@ -69,7 +70,8 @@ LOOP_TIME="$4"
 LOOP_COUNT="$5"
 DEVICE_LIST="$6"
 CORE_MASK="$7"
-SAVE_RESULT="${8:-0}"  # Default: 0 (no save)
+USE_YUV="${8:-0}"      # Default: RGB (reserved parameter)
+SAVE_RESULT="${9:-0}"  # Default: 0 (no save)
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -106,7 +108,7 @@ for device_id in $DEVICE_LIST; do
 
     # Call rknn3_llm_test.sh with specified parameters
     # Pass CLEANUP_TEMP_LOG environment variable to child process
-    CLEANUP_TEMP_LOG="$CLEANUP_TEMP_LOG" "$LLM_TEST_SCRIPT" "$MODEL_DIR" "$SEQ_LEN" "$NEW_TOKENS" "$LOOP_TIME" "$LOOP_COUNT" "$device_id" "$CORE_MASK" "$SAVE_RESULT" &
+    CLEANUP_TEMP_LOG="$CLEANUP_TEMP_LOG" "$LLM_TEST_SCRIPT" "$MODEL_DIR" "$SEQ_LEN" "$NEW_TOKENS" "$LOOP_TIME" "$LOOP_COUNT" "$device_id" "$CORE_MASK" "$USE_YUV" "$SAVE_RESULT" &
     pids+=($!)
 done
 

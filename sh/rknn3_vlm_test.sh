@@ -23,7 +23,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "RKNN3 VLM Demo Stress Test Tool"
     echo "==========================================="
     echo "Usage:"
-    echo "  $0 <model_dir> <loop_time_hours> <count_loop> <device_id> [core_mask] [save_result]"
+    echo "  $0 <model_dir> <loop_time_hours> <count_loop> <device_id> [core_mask] [use_yuv] [save_result]"
     echo ""
     echo "Parameters:"
     echo "  model_dir        Model file base path (before .rknn extension), e.g., /userdata/Qwen2.5-VL-3B/Qwen2.5-VL-3B"
@@ -31,6 +31,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "  count_loop       Inference loop count"
     echo "  device_id        Device ID (typically 0)"
     echo "  core_mask        Core mask (optional, hex), e.g., '0xff' for all 8 cores, '0x0f' for cores 0-3, default: 0xff"
+    echo "  use_yuv          Use YUV format (optional, reserved parameter): 0=RGB, 1=YUV, default: 0"
     echo "  save_result      Save result to file (optional): 1=save, 0=no save, default: 1"
     echo ""
     echo "Core mask examples:"
@@ -46,7 +47,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
 fi
 
 if [ $# -lt 4 ]; then
-    echo "Usage: $0 <model_dir> <loop_time_hours> <count_loop> <device_id> [core_mask] [save_result]"
+    echo "Usage: $0 <model_dir> <loop_time_hours> <count_loop> <device_id> [core_mask] [use_yuv] [save_result]"
     exit 1
 fi
 
@@ -56,7 +57,8 @@ LOOP_TIME="$2"
 COUNT_LOOP="$3"
 DEVICE_ID="$4"
 CORE_MASK="${5:-0xff}"  # Default: all 8 cores
-SAVE_RESULT="${6:-1}"   # Default: save to file
+USE_YUV="${6:-0}"       # Default: RGB (reserved parameter)
+SAVE_RESULT="${7:-1}"   # Default: save to file
 
 model_name=$(basename "$MODEL_DIR")
 
@@ -141,6 +143,7 @@ echo "Loop time: ${LOOP_TIME} hours"
 echo "Loop count: ${COUNT_LOOP}"
 echo "Device ID: ${DEVICE_ID}"
 echo "Core mask: $CORE_MASK"
+echo "Use YUV: $USE_YUV (reserved)"
 
 pids=()
 start_time=$(date +%Y%m%d_%H%M%S)
