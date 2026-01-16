@@ -188,6 +188,14 @@ for log in "${log_files[@]}"; do
     avg_memory=$(grep '^AvgMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
     avg_npu_util=$(grep '^AvgNpuUtilization:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
 
+    # Validate that critical data was extracted successfully
+    if [ -z "$run_cnt" ] || [ "$run_cnt" = "0" ] || [ -z "$tot_time" ] || [ -z "$avgCost" ]; then
+        echo "  [ERROR] Failed to extract critical data from log"
+        echo "  run_cnt: ${run_cnt:-empty}, tot_time: ${tot_time:-empty}, avgCost: ${avgCost:-empty}"
+        tail -n 20 "$log"
+        error_found=1
+    fi
+
 done
 
 

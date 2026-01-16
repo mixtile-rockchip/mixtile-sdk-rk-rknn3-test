@@ -162,6 +162,14 @@ for log in "${log_files[@]}"; do
         total_runs=$(grep '^TotalRuns:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
         avg_memory=$(grep '^AvgMemoryUsage:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
         npu_util=$(grep '^AvgNpuUtilization:' "$log" 2>/dev/null | tail -n 1 | awk '{for(i=2;i<=NF;i++) printf "%s%s",$i,(i==NF?"\n":" ")}')
+
+        # Validate that critical data was extracted successfully
+        if [ -z "$total_runs" ] || [ "$total_runs" = "0" ] || [ -z "$total_time" ]; then
+            echo "  [ERROR] Failed to extract critical data from log"
+            echo "  total_runs: ${total_runs:-empty}, total_time: ${total_time:-empty}"
+            tail -n 20 "$log"
+            error_found=1
+        fi
     else
         echo "--- Log file: $(basename "$log") ([ERROR] Abnormal) ---"
         tail -n 20 "$log" # If success marker not found, print last 20 lines of error

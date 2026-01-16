@@ -143,7 +143,7 @@ for device_id in $device_list; do
 
         # Call rknn3_cnn_test.sh with user-specified use_yuv and save_result parameters
         # Pass CLEANUP_TEMP_LOG environment variable to child process
-        CLEANUP_TEMP_LOG="$CLEANUP_TEMP_LOG" "$CNN_TEST_SCRIPT" "$model" "$time_loop" "$cnt_loop" "$device_id" "$core_mask" "$use_yuv" "$save_result" &
+        CLEANUP_TEMP_LOG="$CLEANUP_TEMP_LOG" "$CNN_TEST_SCRIPT" "$model" "$time_loop" "$cnt_loop" "$device_id" "$core_mask" "$use_yuv" "$save_result" >/dev/null 2>&1 &
         pids+=($!)
     done
 done
