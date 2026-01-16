@@ -325,12 +325,41 @@ reboot_test() {
     fi
     echo
 
+    # 询问是否使用硬件重启
+    while true; do
+        read -p "Use hardware reset? (y/n): " use_hw_reset
+        if [[ -z "$use_hw_reset" ]]; then
+            echo -e "${RED}Error: Input cannot be empty, please re-enter!${NC}"
+            continue
+        fi
+
+        use_hw_reset_lower=$(echo "$use_hw_reset" | tr '[:upper:]' '[:lower:]')
+        if [[ "$use_hw_reset_lower" == "y" || "$use_hw_reset_lower" == "n" ]]; then
+            break
+        else
+            echo -e "${RED}Error: Please enter y or n!${NC}"
+        fi
+    done
+
+    # 根据用户选择设置重启命令
+    if [[ "$use_hw_reset_lower" == "y" ]]; then
+        reset_command="rknn-smi reset -t hw"
+        reset_type="hardware reset"
+    else
+        reset_command="rknn-smi reset"
+        reset_type="normal reset"
+    fi
+
+    echo -e "${GREEN}Selected reset type: $reset_type${NC}"
+    echo
+
     # Confirm test execution
     if [[ "$loop_count" -eq 0 ]]; then
         echo -e "${RED}WARNING: This will reboot the RKNN device indefinitely until manually stopped!${NC}"
     else
         echo -e "${RED}WARNING: This will reboot the RKNN device $loop_count times.${NC}"
     fi
+    echo -e "${YELLOW}Reset type: $reset_type${NC}"
 
     read -p "Continue? (y/n): " confirm_choice
 
@@ -347,14 +376,11 @@ reboot_test() {
     echo -e "${YELLOW}Press Ctrl+C to stop the test at any time${NC}"
     echo
 
-    # 设置信号捕获，允许用户通过Ctrl+C中断测试
     trap 'echo -e "\n${YELLOW}Test interrupted by user${NC}"; break' INT
 
     # 主循环
     while true; do
         ((current_iteration++))
-
-        # 如果不是无限循环模式，检查是否达到指定次数
         if [[ "$loop_count" -ne 0 ]] && [[ $current_iteration -gt $loop_count ]]; then
             break
         fi
@@ -368,15 +394,18 @@ reboot_test() {
         # The background program of npu needs to be closed first
         pkill -f "rknn3_transfer_proxy"
 
-        # Step 1: Hardware reset
-        echo -e "${GREEN}1. Executing hardware reset: rknn-smi reset -t hw${NC}"
-        rknn-smi reset -t hw 2>/dev/null
+        # Step 1: Reset
+        echo -e "${GREEN}1. Executing $reset_type: $reset_command${NC}"
+        eval "$reset_command" 2>/dev/null
+
         # Step 2: Sleep for 1 second
         echo -e "${GREEN}2. Waiting for 1 second...${NC}"
         sleep 2
+
         # Step 3: Restart rknn3 startup
         echo -e "${GREEN}3. Restarting rknn3 startup: rknn3_startup restart${NC}"
         rknn3_startup restart 2>/dev/null
+
         # Additional wait for system to stabilize
         echo -e "${GREEN}Waiting 3 seconds for system to stabilize...${NC}"
         sleep 2
@@ -394,7 +423,6 @@ reboot_test() {
             ((failed_reboots++))
         fi
 
-        # 如果不是无限循环模式，在最后一次迭代后不显示准备信息
         if [[ "$loop_count" -eq 0 ]] || [[ $current_iteration -lt $loop_count ]]; then
             echo
             if [[ "$loop_count" -eq 0 ]]; then
@@ -422,6 +450,7 @@ reboot_test() {
 
     echo -e "Completed iterations: $((current_iteration - 1))"
     echo -e "${GREEN}Successful reboots: $successful_reboots${NC}"
+    echo -e "Reset type used: $reset_type"
 
     if [[ $failed_reboots -gt 0 ]]; then
         echo -e "${RED}Failed reboots: $failed_reboots${NC}"
