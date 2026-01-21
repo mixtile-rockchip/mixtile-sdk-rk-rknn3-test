@@ -319,6 +319,10 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
         return -1;
     }
 
+    // Variables for memory statistics (declared early to avoid issues)
+    MemoryStatistics mem_stats;
+    bool has_memory_stats = false;
+
     // Initialize memory monitor
     MemoryMonitor* memory_monitor = new MemoryMonitor(100000); // 100ms interval
 
@@ -517,9 +521,15 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                     break;
             }
         }
-        // Stop memory monitoring
+        // Stop memory monitoring and get statistics (value copy)
         if (memory_monitor) {
             memory_monitor->stop_monitoring();
+            mem_stats = memory_monitor->get_statistics();
+            has_memory_stats = true;
+
+            // Cleanup memory monitor now (this will print library logs)
+            delete memory_monitor;
+            memory_monitor = nullptr;
         }
     }
 
@@ -533,9 +543,8 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
         printf("TTFT: %.3f ms\n", llm_perfill.get_time());
         printf("TPS: %.3f tokens/s\n", tps);
 
-        // Print memory statistics
-        if (memory_monitor) {
-            MemoryStatistics mem_stats = memory_monitor->get_statistics();
+        // Print memory statistics from the saved copy
+        if (has_memory_stats) {
             if (mem_stats.is_valid && !mem_stats.devices.empty()) {
                 const DeviceMemoryStats& dev = mem_stats.devices[0];
                 printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
@@ -552,11 +561,6 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
 
     }
 
-    // Cleanup memory monitor
-    if (memory_monitor) {
-        delete memory_monitor;
-        memory_monitor = nullptr;
-    }
 
     return ret;
 }

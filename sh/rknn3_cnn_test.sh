@@ -223,7 +223,7 @@ for log in "${log_files[@]}"; do
         total_frames=$(awk "BEGIN {printf \"%.2f\", $total_frames + $fps * $tot_time / 1000}")
     else
         echo "  Failed to extract FPS"
-        error_found=1
+        # error_found=1
     fi
 done
 

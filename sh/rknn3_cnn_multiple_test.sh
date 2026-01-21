@@ -136,6 +136,7 @@ declare -a pids=()
 declare -a log_files=()
 declare -a device_ids=()
 declare -a core_masks=()
+declare -a failed_logs=()
 
 # Function to run single test process
 run_single_test() {
@@ -277,6 +278,10 @@ for i in "${!pids[@]}"; do
         success_count=$((success_count + 1))
     else
         failed_count=$((failed_count + 1))
+        # Record failed log path
+        log_basename=$(basename "${log_files[$i]}")
+        failed_log_path="/data/rknn3_model_stress_test_log/${log_basename}"
+        failed_logs+=("$failed_log_path")
         echo "[ERROR] Test failed: device ${device_ids[$i]}, core mask ${core_masks[$i]}"
     fi
 done
@@ -436,7 +441,20 @@ if [ $failed_count -eq 0 ]; then
     echo "[rknn3_multiple_stress_test_done]"
     exit 0
 else
-    echo "[ERROR] $failed_count task(s) failed, please check logs."
+    echo ""
+    echo "=========================================="
+    echo "[ERROR] $failed_count task(s) failed!"
+    echo "=========================================="
+    echo ""
+    echo "Failed test logs:"
+    for failed_log in "${failed_logs[@]}"; do
+        echo "  $failed_log"
+    done
+    echo ""
+    echo "To view error logs, run:"
+    echo "  cat ${failed_logs[0]}"
+    echo ""
+    echo "=========================================="
     echo "[rknn3_multiple_stress_test_error]"
     exit 1
 fi

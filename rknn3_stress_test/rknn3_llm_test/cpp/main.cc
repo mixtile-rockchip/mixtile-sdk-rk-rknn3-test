@@ -632,8 +632,14 @@ int main(int argc, char **argv) {
         }
     }
 
+    // Stop memory monitoring and get statistics (value copy)
     if (memory_monitor) {
         memory_monitor->stop_monitoring();
+        saved_mem_stats = memory_monitor->get_statistics();
+
+        // Cleanup memory monitor now (this will print library logs)
+        delete memory_monitor;
+        memory_monitor = nullptr;
     }
 
     ret = rknn3_session_query_state(session, &state);
@@ -645,11 +651,6 @@ int main(int argc, char **argv) {
     if (ret != RKNN3_SUCCESS) {
         printf("[rknn3_model_stress_test_error] rknn3_session_query_state failed, ret=%d\n", ret);
         goto exit;
-    }
-
-    if (memory_monitor) {
-        saved_mem_stats = memory_monitor->get_statistics();
-        print_memory_statistics(saved_mem_stats);
     }
 
 exit:
@@ -743,12 +744,6 @@ exit:
     }
     fflush(stdout);
 
-    // Print detailed memory statistics and cleanup
-    if (memory_monitor) {
-        delete memory_monitor;
-        memory_monitor = nullptr;
-        printf("[rknn3_model_stress_test] Memory monitor deinitialized\n");
-    }
 
     return 0;
 }

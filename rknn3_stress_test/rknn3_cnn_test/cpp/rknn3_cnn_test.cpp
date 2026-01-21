@@ -439,6 +439,10 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
     image_buffer_t yuv_img;
     memset(&yuv_img, 0, sizeof(image_buffer_t));
 
+    // Variables for memory statistics (declared early to avoid goto issues)
+    MemoryStatistics mem_stats;
+    bool has_memory_stats = false;
+
     int infer_cnt = 0;
     TIMER tot_cost;
     static float last_print_time = 0.0f;
@@ -552,12 +556,19 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
             }
         }
     }
-    // Stop memory monitoring
+
+    // Stop memory monitoring and get statistics (value copy)
     if (memory_monitor) {
         memory_monitor->stop_monitoring();
+        mem_stats = memory_monitor->get_statistics();
+        has_memory_stats = true;
+
+        // Cleanup memory monitor now (this will print library logs)
+        delete memory_monitor;
+        memory_monitor = nullptr;
     }
 
-    // 4. 统一最终统计输出
+    // 4. 统一最终统计输出 (after all library cleanup, clean output)
     {
         float total_time = tot_cost.get_time();
         float avgCost = total_time / infer_cnt;
@@ -582,9 +593,8 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         printf("AvgFPS: %.3f\n", avgFPS);
         printf("AvgCost: %.2f ms\n", avgCost);
 
-        // Print memory statistics (average only)
-        if (memory_monitor) {
-            MemoryStatistics mem_stats = memory_monitor->get_statistics();
+        // Print memory statistics (average only) from the saved copy
+        if (has_memory_stats) {
             if (mem_stats.is_valid && !mem_stats.devices.empty()) {
                 const DeviceMemoryStats& dev = mem_stats.devices[0];
                 printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
@@ -693,7 +703,7 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
     // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr,vision_ctx->outputs[0].mem->size);
 
 out:
-    // Cleanup memory monitor
+    // Cleanup memory monitor (if not already cleaned up)
     if (memory_monitor) {
         delete memory_monitor;
         memory_monitor = nullptr;
