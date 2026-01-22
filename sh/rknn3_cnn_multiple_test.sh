@@ -25,7 +25,7 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     echo "  device_list      Device ID list (space-separated), e.g., '0 1' for devices 0 and 1"
     echo "  core_list        Core list (space-separated), e.g., '1 2 3 4' for cores 1-4"
     echo "  use_yuv          Use YUV input format (optional): 1=enable, 0=disable, default: 0"
-    echo "  save_result      Save result to file (optional): 1=save, 0=no save, default: 0"
+    echo "  save_result      Save result to file (optional): 1=save + enable memory monitor, 0=no save, default: 0"
     echo ""
     echo "Environment Variables:"
     echo "  CLEANUP_TEMP_LOG  Delete temporary log files after test (default: true)"
@@ -51,8 +51,8 @@ if [ "${1:-}" == "-h" ] || [ "${1:-}" == "--help" ]; then
     echo "    Core 2 -> 0x02"
     echo "    Core 3 -> 0x04"
     echo "    Core 4 -> 0x08"
-    echo "  - When save_result=0, results are not saved (useful for parallel tests)"
-    echo "  - When save_result=1, each test saves results to cnn.log file"
+    echo "  - When save_result=0, results are not saved, memory monitoring disabled (useful for parallel tests)"
+    echo "  - When save_result=1, each test saves results to cnn.log file and enables memory monitoring"
     echo "  - On test failure, logs are copied to /data/rknn3_model_stress_test_log/"
     echo "  - Set CLEANUP_TEMP_LOG=false to keep temporary logs for debugging"
     echo ""
@@ -158,6 +158,11 @@ run_single_test() {
     # Add optional flags
     if [ "$use_yuv" == "1" ]; then
         CMD_ARGS+=("--yuv")
+    fi
+
+    # Enable memory monitor if save_result is enabled
+    if [ "$save_result" == "1" ]; then
+        CMD_ARGS+=("-mm")
     fi
 
     # Execute rknn3_cnn_demo and redirect output to log file

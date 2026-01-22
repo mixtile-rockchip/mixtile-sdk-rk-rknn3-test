@@ -47,6 +47,7 @@ void print_usage(char *argv[]) {
     printf("  -al, --audio_loop      Audio loop count (default: 1)\n");
     printf("  -tl, --time_loop       Time loop in hours (overrides loop count)\n");
     printf("  -id, --device_id       Device ID (default: 0)\n");
+    printf("  -mm, --enable_memory_monitor  Enable memory monitoring (default: disabled)\n");
     printf("  -h,  --help            Display this help message\n");
     printf("\nExample:\n");
     printf("  %s -am audio.rknn -aw audio.weight -ac 0x7 -a test.wav -al 100\n", argv[0]);
@@ -63,6 +64,7 @@ int main(int argc, char **argv) {
     int audio_loop = 1;
     float time_loop = 0.f;
     uint32_t device_id = 0;
+    bool enable_memory_monitor = false;
 
     // Parse command line arguments
     for (int i = 1; i < argc; i += 2) {
@@ -80,6 +82,9 @@ int main(int argc, char **argv) {
             time_loop = atof(argv[i + 1]);
         } else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0) {
             device_id = atoi(argv[i + 1]);
+        } else if (strcmp(argv[i], "-mm") == 0 || strcmp(argv[i], "--enable_memory_monitor") == 0) {
+            enable_memory_monitor = true;
+            i--;  // This flag doesn't have a value, so decrement i to compensate for i += 2
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv);
             return 0;
@@ -178,7 +183,7 @@ int main(int argc, char **argv) {
 
     // Run inference test
     printf("\n" RKNN3_AUDIO_ENC_LOG "Starting audio encoding stress test...\n");
-    ret = inference_audio_encoder_test(&rknn_app_ctx, &src_audio, model_name, audio_loop, time_loop);
+    ret = inference_audio_encoder_test(&rknn_app_ctx, &src_audio, model_name, audio_loop, time_loop, enable_memory_monitor);
     if (ret != 0) {
         printf(RKNN3_AUDIO_ENC_ERR "Inference test failed! ret=%d\n", ret);
         goto out;

@@ -29,7 +29,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "  count_loop       Inference loop count"
     echo "  device_id        Device ID (typically 0)"
     echo "  core_mask        Core mask (optional, hex), default: 0xff"
-    echo "  save_result      Save result to file (optional): 1=save, 0=no save, default: 1"
+    echo "  save_result      Save result to file (optional): 1=save + enable memory monitor, 0=no save, default: 1"
     echo ""
     echo "Core mask examples:"
     echo "  0xff   - All 8 cores (binary: 11111111) [default]"
@@ -128,21 +128,27 @@ log_files=()
 current_log="${log_pre}_${model_dirname}_${start_time}_device${DEVICE_ID}_${CORE_MASK}.log"
 log_files+=("$current_log")
 
-# Build complete command
-cmd="rknn3_audio_encoder_test -am \"$AUDIO_MODEL\" -aw \"$AUDIO_WEIGHT\" -ac \"$CORE_MASK\" -a \"$AUDIO_PATH\" -al \"${COUNT_LOOP}\" -tl \"${TIME_LOOP}\" -id \"${DEVICE_ID}\""
+# Build command arguments
+CMD_ARGS=(
+    "-am" "$AUDIO_MODEL"
+    "-aw" "$AUDIO_WEIGHT"
+    "-ac" "$CORE_MASK"
+    "-a" "$AUDIO_PATH"
+    "-al" "$COUNT_LOOP"
+    "-tl" "$TIME_LOOP"
+    "-id" "${DEVICE_ID}"
+)
+
+# Enable memory monitor if save_result is enabled
+if [ "$SAVE_RESULT" == "1" ]; then
+    CMD_ARGS+=("-mm")
+fi
 
 # Output executed command
-echo ">>> Executing command: $cmd > $current_log"
+echo ">>> Executing command: rknn3_audio_encoder_test ${CMD_ARGS[*]} > $current_log"
 
 # Execute inference command
-rknn3_audio_encoder_test \
-    -am "$AUDIO_MODEL" \
-    -aw "$AUDIO_WEIGHT" \
-    -ac "$CORE_MASK" \
-    -a "$AUDIO_PATH" \
-    -al "$COUNT_LOOP" \
-    -tl "$TIME_LOOP" \
-    -id "${DEVICE_ID}" >"$current_log" 2>&1 &
+rknn3_audio_encoder_test "${CMD_ARGS[@]}" >"$current_log" 2>&1 &
 pids+=($!)
 
 echo "Waiting for all processes to complete..."

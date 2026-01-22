@@ -406,30 +406,33 @@ static int convert_any_type_to_fp32(const void *src, float *dst, int n_elems, rk
     return 0;
 }
 
-int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, uint32_t cnt_loop, float time_loop) {
+int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, uint32_t cnt_loop, float time_loop, bool enable_memory_monitor) {
     TIMER cost;
     if ((!vision_ctx) || (!img)) {
         printf("[rknn3_model_stress_test_error] vision_ctx or img is NULL");
         return -1;
     }
 
-    // Initialize memory monitor
-    MemoryMonitor* memory_monitor = new MemoryMonitor(50);
+    // Initialize memory monitor (only if enabled)
+    MemoryMonitor* memory_monitor = nullptr;
+    if (enable_memory_monitor) {
+        memory_monitor = new MemoryMonitor(50);
 
-    // Set target device(s) to monitor
-    // Currently monitoring only the device used for inference
-    // For multi-device scenarios, you can pass multiple device IDs: {0, 1, 2}
-    // Or pass empty vector {} to monitor all devices
-    std::vector<uint16_t> target_devices = {(uint16_t)vision_ctx->device_id};
-    memory_monitor->set_target_devices(target_devices);
+        // Set target device(s) to monitor
+        // Currently monitoring only the device used for inference
+        // For multi-device scenarios, you can pass multiple device IDs: {0, 1, 2}
+        // Or pass empty vector {} to monitor all devices
+        std::vector<uint16_t> target_devices = {(uint16_t)vision_ctx->device_id};
+        memory_monitor->set_target_devices(target_devices);
 
-    if (!memory_monitor->initialize()) {
-        printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
-        delete memory_monitor;
-        memory_monitor = nullptr;
-    } else {
-        memory_monitor->set_realtime_print(false);
-        printf("[rknn3_model_stress_test] Memory monitor initialized successfully\n");
+        if (!memory_monitor->initialize()) {
+            printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
+            delete memory_monitor;
+            memory_monitor = nullptr;
+        } else {
+            memory_monitor->set_realtime_print(false);
+            printf("[rknn3_model_stress_test] Memory monitor initialized successfully\n");
+        }
     }
 
     int ret;

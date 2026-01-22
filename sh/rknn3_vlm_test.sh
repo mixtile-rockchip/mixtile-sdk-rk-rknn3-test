@@ -32,7 +32,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "  device_id        Device ID (typically 0)"
     echo "  core_mask        Core mask (optional, hex), e.g., '0xff' for all 8 cores, '0x0f' for cores 0-3, default: 0xff"
     echo "  use_yuv          Use YUV format (optional, reserved parameter): 0=RGB, 1=YUV, default: 0"
-    echo "  save_result      Save result to file (optional): 1=save, 0=no save, default: 1"
+    echo "  save_result      Save result to file (optional): 1=save + enable memory monitor, 0=no save, default: 1"
     echo ""
     echo "Core mask examples:"
     echo "  0xff   - All 8 cores (binary: 11111111)"
@@ -156,23 +156,33 @@ log_pre="${LOG_DIR}/rknn3_$$"
 
 current_log="${log_pre}_${model_dirname}_${start_time}_device${DEVICE_ID}_${CORE_MASK}.log"
 log_files+=("$current_log")
+
+# Build command arguments
+CMD_ARGS=(
+    "-vm" "$VISION_MODEL"
+    "-vw" "$VISION_WEIGHT"
+    "-lm" "$LLM_MODEL"
+    "-lw" "$LLM_WEIGHT"
+    "-tk" "$TOKENIZER"
+    "-em" "$EMBEDDING"
+    "-vc" "$VISION_CORE_MASK"
+    "-lc" "$LLM_CORE_MASK"
+    "-im" "$IMAGE_PATH"
+    "-pi" "$PROMPT_FILE"
+    "-vl" "$COUNT_LOOP"
+    "-ll" "$COUNT_LOOP"
+    "-tl" "$LOOP_TIME"
+    "-id" "${DEVICE_ID}"
+)
+
+# Enable memory monitor if save_result is enabled
+if [ "$SAVE_RESULT" == "1" ]; then
+    CMD_ARGS+=("-mm")
+fi
+
 # Execute inference command
-rknn3_vlm_demo \
-    -vm "$VISION_MODEL" \
-    -vw "$VISION_WEIGHT" \
-    -lm "$LLM_MODEL" \
-    -lw "$LLM_WEIGHT" \
-    -tk "$TOKENIZER" \
-    -em "$EMBEDDING" \
-    -vc "$VISION_CORE_MASK" \
-    -lc "$LLM_CORE_MASK" \
-    -im "$IMAGE_PATH" \
-    -pi "$PROMPT_FILE" \
-    -vl "$COUNT_LOOP" \
-    -ll "$COUNT_LOOP" \
-    -tl "$LOOP_TIME" \
-    -id "${DEVICE_ID}" >"$current_log" 2>&1 &
-    pids+=($!)
+rknn3_vlm_demo "${CMD_ARGS[@]}" >"$current_log" 2>&1 &
+pids+=($!)
 
 echo "Waiting for all processes to complete..."
 for pid in "${pids[@]}"; do wait "$pid"; done

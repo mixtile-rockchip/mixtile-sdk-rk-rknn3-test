@@ -159,6 +159,7 @@ void print_usage(char *argv[]) {
     printf("  -vl, --vision_loop   default:1  \n");
     printf("  -ll, --llm_loop  default:1       \n");
     printf("  -tl, --time_loop(hours) \n");
+    printf("  -mm, --enable_memory_monitor  enable memory monitoring (default: disabled) \n");
     printf("\nUse '%s --help' to display this message.\n", argv[0]);
 
     return;
@@ -177,6 +178,7 @@ int main(int argc, char **argv) {
     uint32_t vision_loop = 1, llm_loop = 1;
     float time_loop = 0.f;
     uint32_t device_id = 0;
+    bool enable_memory_monitor = false;
 
     for (int i = 1; i < argc; i += 2) {
         if (strcmp(argv[i], "-vm") == 0 || strcmp(argv[i], "--vision_model") == 0) {
@@ -207,7 +209,10 @@ int main(int argc, char **argv) {
             time_loop = atof(argv[i + 1]);
         } else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0) {
             device_id = atoi(argv[i + 1]);
-        }  else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+        } else if (strcmp(argv[i], "-mm") == 0 || strcmp(argv[i], "--enable_memory_monitor") == 0) {
+            enable_memory_monitor = true;
+            i--;  // This flag doesn't have a value, so decrement i to compensate for i += 2
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv);
             return 0;
         }else {
@@ -428,7 +433,7 @@ int main(int argc, char **argv) {
 
     // llm_perfill.tik();
     vl_cost.tik();
-    ret = inference_rknn3_vlm_model(&rknn_app_ctx, &src_image, tensor, vision_loop, llm_loop,time_loop);
+    ret = inference_rknn3_vlm_model(&rknn_app_ctx, &src_image, tensor, vision_loop, llm_loop,time_loop, enable_memory_monitor);
     if (ret != 0) {
         printf("[rknn3_model_stress_test_error] inference rknn3_vlm model fail! ret=%d\n", ret);
         goto out;

@@ -319,6 +319,7 @@ void print_usage(char *argv[]) {
     printf("  -cl, --cnt_loop  default:1 \n");
     printf("  -tl, --time_loop(hours) \n");
     printf("  -d, --device_id       specify device ID\n");
+    printf("  -mm, --enable_memory_monitor  enable memory monitoring (default: disabled) \n");
     printf("\nUse '%s --help' to display this message.\n", argv[0]);
 
     return;
@@ -365,6 +366,7 @@ int main(int argc, char **argv) {
     uint32_t cnt_loop = 1;
     float time_loop = 0.f;
     uint32_t device_id = 0;
+    bool enable_memory_monitor = false;
 
      for (int i = 1; i < argc; i += 2) {
         if (strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--model_path") == 0) {
@@ -389,6 +391,9 @@ int main(int argc, char **argv) {
             max_new_tokens = atoi(argv[i+1]);
         } else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0){
             device_id = atoi(argv[i+1]);  // 指定设备ID
+        } else if (strcmp(argv[i], "-mm") == 0 || strcmp(argv[i], "--enable_memory_monitor") == 0) {
+            enable_memory_monitor = true;
+            i--;  // This flag doesn't have a value, so decrement i to compensate for i += 2
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv);
             return 0;
@@ -468,20 +473,22 @@ int main(int argc, char **argv) {
 
     printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
 
-    // 初始化内存监控器（提前到模型加载前，便于诊断内存问题）
-    memory_monitor = new MemoryMonitor(100000); // 100ms监控间隔
+    // Initialize memory monitor only if enabled
+    if (enable_memory_monitor) {
+        memory_monitor = new MemoryMonitor(100000); // 100ms monitoring interval
 
-    // 设置目标设备（只监控推理使用的设备）
-    std::vector<uint16_t> target_devices = {(uint16_t)device_id};
-    memory_monitor->set_target_devices(target_devices);
+        // Set target device(s) to monitor (only monitor the device used for inference)
+        std::vector<uint16_t> target_devices = {(uint16_t)device_id};
+        memory_monitor->set_target_devices(target_devices);
 
-    if (!memory_monitor->initialize()) {
-        printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
-        delete memory_monitor;
-        memory_monitor = nullptr;
-    } else {
-        memory_monitor->set_realtime_print(false);
-        printf("[rknn3_model_stress_test] Memory monitor initialized successfully with 100ms interval\n");
+        if (!memory_monitor->initialize()) {
+            printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
+            delete memory_monitor;
+            memory_monitor = nullptr;
+        } else {
+            memory_monitor->set_realtime_print(false);
+            printf("[rknn3_model_stress_test] Memory monitor initialized successfully with 100ms interval\n");
+        }
     }
 
     rknn3_init_extend init_extend = {0};

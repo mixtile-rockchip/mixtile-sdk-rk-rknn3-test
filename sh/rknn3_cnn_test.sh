@@ -29,7 +29,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "  device_id        Device ID (typically 0)"
     echo "  core_mask        Core mask (optional, hex), e.g., '0xff' for all 8 cores, '0x0f' for cores 0-3, default: 0x01"
     echo "  use_yuv          Use YUV input format (optional): 1=enable, 0=disable, default: 0"
-    echo "  save_result      Save result to file (optional): 1=save, 0=no save, default: 1"
+    echo "  save_result      Save result to file (optional): 1=save + enable memory monitor, 0=no save, default: 1"
     echo ""
     echo "Core mask examples:"
     echo "  0xff   - All 8 cores (binary: 11111111)"
@@ -144,6 +144,11 @@ if [ "$USE_YUV" == "1" ]; then
     CMD_ARGS+=("--yuv")
 fi
 
+# Enable memory monitor if save_result is enabled
+if [ "$SAVE_RESULT" == "1" ]; then
+    CMD_ARGS+=("-mm")
+fi
+
 # Output executed command
 echo ">>> Executing command: rknn3_cnn_demo ${CMD_ARGS[*]} > $current_log"
 
@@ -164,11 +169,12 @@ tot_time=0
 avg_cost=0
 run_cnt=0
 device_id_mac=""
-device_memory=""
 avg_memory=""
-min_memory=""
-max_memory=""
-npu_util=""
+avg_npu_util=""
+input_format=""
+input_height=""
+input_width=""
+input_channel=""
 
 echo ""
 echo "--- Device ${DEVICE_ID} Statistics ---"

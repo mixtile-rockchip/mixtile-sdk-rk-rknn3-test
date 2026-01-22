@@ -42,6 +42,6 @@ int init_rknn3_vlm_model(rknn_app_context_t* app_ctx, const char* llm_model_path
 
 int release_rknn3_vlm_model(rknn_app_context_t* app_ctx);
 
-int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx, image_buffer_t* img, rknn3_llm_multimodal_tensor tensor, int vision_loop,int llm_loop,float time_loop);
+int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx, image_buffer_t* img, rknn3_llm_multimodal_tensor tensor, int vision_loop,int llm_loop,float time_loop, bool enable_memory_monitor);
 
 #endif //_RKNN_DEMO_RKNN3_VLM_H_

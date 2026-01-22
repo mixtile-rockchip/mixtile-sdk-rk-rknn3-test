@@ -42,6 +42,7 @@ void print_usage(char *argv[]) {
     printf("  -tl, --time_loop(hours) \n");
     printf("  -id, --device_id \n");
     printf("  --yuv  input image is yuv420sp nv12 \n");
+    printf("  -mm, --enable_memory_monitor  enable memory monitoring (default: disabled) \n");
     printf("\nUse '%s --help' to display this message.\n", argv[0]);
 
     return;
@@ -56,6 +57,7 @@ int main(int argc, char **argv) {
     float time_loop = 0.f;
     uint32_t device_id = RKNN3_DEFAULT_DEVICE_ID;
     bool is_yuv = false;
+    bool enable_memory_monitor = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--model_path") == 0) {
             if (i + 1 < argc) common_model_path = argv[++i];
@@ -73,6 +75,8 @@ int main(int argc, char **argv) {
             if (i + 1 < argc) device_id = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--yuv") == 0) {
             is_yuv = true;
+        } else if (strcmp(argv[i], "-mm") == 0 || strcmp(argv[i], "--enable_memory_monitor") == 0) {
+            enable_memory_monitor = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv);
             return 0;
@@ -128,7 +132,7 @@ int main(int argc, char **argv) {
     // img_embeds = (float16*)malloc((embed_elems) * sizeof(float16));
     // memset(img_embeds,0,(embed_elems) * sizeof(float16));
 
-    ret = inference_common_img(&rknn_app_ctx, &src_image, cnt_loop, time_loop);
+    ret = inference_common_img(&rknn_app_ctx, &src_image, cnt_loop, time_loop, enable_memory_monitor);
     if (ret != 0) {
         printf("[rknn3_model_stress_test_error] inference model fail! ret=%d\n", ret);
         return -1;

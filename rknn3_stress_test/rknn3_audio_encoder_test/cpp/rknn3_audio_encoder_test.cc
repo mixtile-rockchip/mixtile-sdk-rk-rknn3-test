@@ -189,7 +189,7 @@ int release_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx)
 int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
                                   audio_buffer_t* audio,
                                   const char* model_name,
-                                  int audio_loop, float time_loop)
+                                  int audio_loop, float time_loop, bool enable_memory_monitor)
 {
     int ret;
     if (!app_ctx || !audio) {
@@ -213,15 +213,18 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     MemoryStatistics mem_stats;
     bool has_memory_stats = false;
 
-    // Initialize memory monitor
-    MemoryMonitor* memory_monitor = new MemoryMonitor(50);
-    std::vector<uint16_t> target_devices = {(uint16_t)app_ctx->audio.device_id};
-    memory_monitor->set_target_devices(target_devices);
+    // Initialize memory monitor only if enabled
+    MemoryMonitor* memory_monitor = nullptr;
+    if (enable_memory_monitor) {
+        memory_monitor = new MemoryMonitor(50);
+        std::vector<uint16_t> target_devices = {(uint16_t)app_ctx->audio.device_id};
+        memory_monitor->set_target_devices(target_devices);
 
-    if (!memory_monitor->initialize()) {
-        printf(RKNN3_AUDIO_ENC_WRN "Memory monitor initialization failed, monitoring disabled\n");
-        delete memory_monitor;
-        memory_monitor = nullptr;
+        if (!memory_monitor->initialize()) {
+            printf(RKNN3_AUDIO_ENC_WRN "Memory monitor initialization failed, monitoring disabled\n");
+            delete memory_monitor;
+            memory_monitor = nullptr;
+        }
     }
 
     // Prepare audio input (preprocessing: mel filter, audio preprocess, mask creation, fp16 conversion)

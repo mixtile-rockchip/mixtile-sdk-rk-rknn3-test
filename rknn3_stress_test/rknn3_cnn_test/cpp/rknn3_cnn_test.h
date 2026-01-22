@@ -42,6 +42,6 @@ typedef struct {
 
 int init_common_img(rknn_common_img_ctx* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask,uint32_t device_id, image_format_t src_fmt);
 int release_common_img(rknn_common_img_ctx* vision_ctx);
-int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,uint32_t loop,float time_loop);
+int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,uint32_t loop,float time_loop, bool enable_memory_monitor);
 
 #endif

@@ -309,7 +309,8 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                                 rknn3_llm_multimodal_tensor tensor,
                                 int vision_loop,
                                 int llm_loop,
-                                float time_loop)
+                                float time_loop,
+                                bool enable_memory_monitor)
 {
     int ret;
 
@@ -323,20 +324,23 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
     MemoryStatistics mem_stats;
     bool has_memory_stats = false;
 
-    // Initialize memory monitor
-    MemoryMonitor* memory_monitor = new MemoryMonitor(100000); // 100ms interval
+    // Initialize memory monitor only if enabled
+    MemoryMonitor* memory_monitor = nullptr;
+    if (enable_memory_monitor) {
+        memory_monitor = new MemoryMonitor(100000); // 100ms interval
 
-    // 设置目标设备（只监控推理使用的设备）
-    std::vector<uint16_t> target_devices = {(uint16_t)app_ctx->device_id};
-    memory_monitor->set_target_devices(target_devices);
+        // Set target device(s) to monitor (only monitor the device used for inference)
+        std::vector<uint16_t> target_devices = {(uint16_t)app_ctx->device_id};
+        memory_monitor->set_target_devices(target_devices);
 
-    if (!memory_monitor->initialize()) {
-        printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
-        delete memory_monitor;
-        memory_monitor = nullptr;
-    } else {
-        memory_monitor->set_realtime_print(false);
-        printf("[rknn3_model_stress_test] Memory monitor initialized successfully\n");
+        if (!memory_monitor->initialize()) {
+            printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
+            delete memory_monitor;
+            memory_monitor = nullptr;
+        } else {
+            memory_monitor->set_realtime_print(false);
+            printf("[rknn3_model_stress_test] Memory monitor initialized successfully\n");
+        }
     }
     static float last_vision_cost = 0.f;
     static float last_ttft = 0.f;
