@@ -297,7 +297,11 @@ aicp_test还包含一些高级功能，可以输入更加详细的参数来满�
 ```bash
 ./rknn3_vlm_multiple_test.sh ../vlm/Qwen2.5-VL-3B 0 1 "0 1" 0xff 0 0
 ```
+#### 查看内容
+对于VLM等模型,用户如需查看模型输出的内容,可以在模型路径下将.ini中的printresult设置为1,然后直接运行编译出的bin文件
 
+示例：
+./rknn3_vlm_demo -vm ../vlm/Qwen2.5-VL-3B/vision_Qwen2.5-VL-3B.rknn -vw ../vlm/Qwen2.5-VL-3B/vision_Qwen2.5-VL-3B.weight -lm ../vlm/Qwen2.5-VL-3B/llm_Qwen2.5-VL-3B.rknn -lw ../vlm/Qwen2.5-VL-3B/llm_Qwen2.5-VL-3B.weight -tk ../vlm/Qwen2.5-VL-3B/Qwen2.5-VL-3B.tokenizer.gguf -em ../vlm/Qwen2.5-VL-3B/Qwen2.5-VL-3B.tokenizer.gguf -im test.jpg -vc 0xff -lc 0xff -pi ../vlm/Qwen2.5-VL-3B/Qwen2.5-VL-3B.ini -vl 1 -ll 1 -tl 0
 ### Audio Encoder 测试
 
 ```bash
