@@ -39,6 +39,7 @@ int rknnsmi_get_cpu_info(uint16_t device_id, uint16_t chip_id, struct nsmi_cpu_i
 int rknnsmi_get_npu_info(uint16_t device_id, uint16_t chip_id, struct nsmi_npu_info *npu_info);
 int rknnsmi_get_device_power(uint16_t device_id, uint32_t *power);
 int rknnsmi_get_device_voltage(uint16_t device_id, uint32_t *voltage);
+int rknnsmi_get_device_current(uint16_t device_id, uint32_t *current);
 int rknnsmi_get_chip_health(uint16_t device_id, uint16_t chip_id, enum NSMI_CHIP_HEALTH_STATUS *health);
 int rknnsmi_get_system_time(uint16_t device_id, uint16_t chip_id, uint32_t *time);
 int rknnsmi_get_chip_temperature(uint16_t device_id, uint16_t chip_id, int32_t *temperature);
@@ -48,12 +49,14 @@ int rknnsmi_get_fan_info(uint16_t device_id, uint32_t *speed_ratio);
 int rknnsmi_get_pcie_err_event_count(uint16_t device_id, struct pcie_err_event_count *err_event_count);
 int rknnsmi_get_reset_reason(uint16_t device_id, uint16_t chip_id, enum NSMI_RESET_REASON *reason);
 int rknnsmi_get_work_mode(uint16_t device_id, uint16_t chip_id, enum NSMI_WORK_MODE *work_mode);
+int rknnsmi_get_prefill_mode(uint16_t device_id, uint16_t chip_id, enum NSMI_PREFILL_MODE *prefill_mode);
 int rknnsmi_reset_device(uint16_t device_id);
 int rknnsmi_hw_reset_device(uint16_t device_id);
 int rknnsmi_set_cpu_freq(uint16_t device_id, uint16_t chip_id, uint16_t cpu_freq);
 int rknnsmi_set_npu_freq(uint16_t device_id, uint16_t chip_id, uint16_t npu_freq);
 int rknnsmi_set_log_level(enum NSMI_LOG_MODULE module, uint16_t device_id, uint16_t chip_id, uint16_t level);
 int rknnsmi_set_work_mode(uint16_t device_id, uint16_t chip_id, enum NSMI_WORK_MODE work_mode);
+int rknnsmi_set_prefill_mode(uint16_t device_id, uint16_t chip_id, enum NSMI_PREFILL_MODE prefill_mode);
 int rknnsmi_collect_log(uint16_t device_id, uint16_t log_type, char *log_dir);
 
 #endif // RKNNSMI_H

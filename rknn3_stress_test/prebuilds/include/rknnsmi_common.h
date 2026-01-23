@@ -56,12 +56,15 @@
 #define RKNNSMI_CMD_GET_FAN_INFO           14 // 获取风扇信息
 #define RKNNSMI_CMD_GET_RESET_REASON       15 // 获取复位原因
 #define RKNNSMI_CMD_GET_WORK_MODE          16 // 获取工作模式
+#define RKNNSMI_CMD_GET_PREFILL_MODE       17 // 获取预填充模式
+#define RKNNSMI_CMD_GET_DEVICE_CURRENT     18 // 获取设备电流
 
-#define RKNNSMI_CMD_RESET_DEVICE  101 // 重启设备
-#define RKNNSMI_CMD_SET_CPU_FREQ  102 // 设置 CPU 频率
-#define RKNNSMI_CMD_SET_NPU_FREQ  103 // 设置 NPU 频率
-#define RKNNSMI_CMD_SET_LOG_LEVEL 104 // 设置日志等级
-#define RKNNSMI_CMD_SET_WORK_MODE 105 // 设置工作模式
+#define RKNNSMI_CMD_RESET_DEVICE     101 // 重启设备
+#define RKNNSMI_CMD_SET_CPU_FREQ     102 // 设置 CPU 频率
+#define RKNNSMI_CMD_SET_NPU_FREQ     103 // 设置 NPU 频率
+#define RKNNSMI_CMD_SET_LOG_LEVEL    104 // 设置日志等级
+#define RKNNSMI_CMD_SET_WORK_MODE    105 // 设置工作模式
+#define RKNNSMI_CMD_SET_PREFILL_MODE 106 // 设置预填充模式
 
 #define RKNNSMI_CMD_COLLECT_LOG 201 // 收集日志
 #define RKNNSMI_CMD_GET_LOG_LEN 202 // 获取日志长度
@@ -91,6 +94,12 @@ enum NSMI_WORK_MODE {
     NSMI_WORK_MODE_PERFORMANCE,
     NSMI_WORK_MODE_USER,
     NSMI_WORK_MODE_UNDEFINED,
+};
+
+enum NSMI_PREFILL_MODE {
+    NSMI_PREFILL_MODE_EFFICIENT = 0,
+    NSMI_PREFILL_MODE_PERFORMANCE,
+    NSMI_PREFILL_MODE_UNDEFINED,
 };
 
 enum NSMI_CHIP_HEALTH_STATUS {
@@ -223,6 +232,11 @@ struct nsmi_log_level {
 struct nsmi_work_mode {
     uint16_t chip_id;         // 芯片 ID
     enum NSMI_WORK_MODE mode; // 工作模式
+};
+
+struct nsmi_prefill_mode {
+    uint16_t chip_id;            // 芯片 ID
+    enum NSMI_PREFILL_MODE mode; // 预填充模式
 };
 
 struct nsmi_collect_log_info {
