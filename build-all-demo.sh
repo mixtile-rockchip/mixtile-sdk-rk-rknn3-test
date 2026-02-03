@@ -2,7 +2,7 @@
 
 set -e
 
-# --- 默认参数设置 ---
+# --- Default parameter Settings ---
 TARGET_SOC=""
 TARGET_ARCH=""
 BUILD_TYPE="Release"
@@ -33,7 +33,7 @@ if [ -z ${TARGET_SOC} ]; then
   exit -1
 fi
 
-# --- 编译器设置 ---
+# --- Compiler Settings ---
 if [ "${TARGET_SOC}" = "x86" ]; then
     export CC=gcc
     export CXX=g++
@@ -42,7 +42,7 @@ if [ "${TARGET_SOC}" = "x86" ]; then
 else
     # Use parameter GCC_COMPILER if provided, otherwise use environment variable
     if [ -z "$GCC_COMPILER" ]; then
-        echo "❌ 未指定编译器: 请使用 -g 参数或 export GCC_COMPILER"
+        echo "❌ No compiler specified: Please use the -g parameter or export GCC_COMPILER"
         exit 1
     fi
 
@@ -51,31 +51,31 @@ else
     TARGET_PLATFORM=${TARGET_SOC}_linux_${TARGET_ARCH}
 
     if ! command -v ${CC} >/dev/null 2>&1; then
-        echo "❌ 未找到编译器: ${CC}"
+        echo "❌ The compiler was not found: ${CC}"
         exit 1
     fi
 fi
 
 ROOT_PWD=$( cd "$( dirname $0 )" && pwd )
-# 修改安装根目录：汇总到同一个 install/平台名 下
+# Modify the installation root directory: Consolidate it under the same install/ platform name
 FINAL_INSTALL_DIR=${ROOT_PWD}/install/aicp_test_${TARGET_ARCH}
 
 echo "==========================================="
-echo "开始批量编译: ${DEMO_LIST[*]}"
-echo "目标平台: ${TARGET_PLATFORM}"
-echo "安装目录: ${FINAL_INSTALL_DIR}"
+echo "Start batch compilation: ${DEMO_LIST[*]}"
+echo "Target platform: ${TARGET_PLATFORM}"
+echo "Installation directory: ${FINAL_INSTALL_DIR}"
 echo "==========================================="
 
-# 清理旧的汇总目录
+# Clear the old summary directory
 [ -d "${FINAL_INSTALL_DIR}" ] && rm -rf "${FINAL_INSTALL_DIR}"
 mkdir -p "${FINAL_INSTALL_DIR}"
 
-# --- 进入循环编译 ---
+# --- Enter loop compilation ---
 for DEMO_NAME in "${DEMO_LIST[@]}"
 do
-    echo ">>>> 正在处理: ${DEMO_NAME} ...."
+    echo ">>>> Being processed: ${DEMO_NAME} ...."
 
-    # 自动寻找路径 (匹配你的目录结构)
+    # Automatically find the path (match your directory structure)
     BUILD_DEMO_PATH=""
     for search_path in "rknn3_stress_test" "tested_models" "examples"; do
         if [ -d "${ROOT_PWD}/${search_path}/${DEMO_NAME}/cpp" ]; then
@@ -85,18 +85,18 @@ do
     done
 
     if [ -z "${BUILD_DEMO_PATH}" ]; then
-        echo "⚠️ 跳过: 找不到 ${DEMO_NAME} 的 cpp 源码目录"
+        echo "⚠️ Skip: The cpp source code directory for ${DEMO_NAME} cannot be found"
         continue
     fi
 
-    # 为每个 Demo 创建独立的 build 目录
+    # Create an independent build directory for each Demo
     CURRENT_BUILD_DIR=${ROOT_PWD}/build/build_${DEMO_NAME}_${TARGET_PLATFORM}
     mkdir -p "${CURRENT_BUILD_DIR}"
 
     cd "${CURRENT_BUILD_DIR}"
 
-    # 执行 CMake
-    # 注意：CMAKE_INSTALL_PREFIX 指向总目录下的子文件夹
+    # Execute CMake
+    # Note: CMAKE_INSTALL_PREFIX points to a subfolder in the main directory
     cmake ../../${BUILD_DEMO_PATH} \
         -DTARGET_SOC=${TARGET_SOC} \
         -DCMAKE_SYSTEM_NAME=Linux \
@@ -110,12 +110,12 @@ do
     make -j$(nproc)
     make install
     cp ${ROOT_PWD}/sh/* ${FINAL_INSTALL_DIR}/
-    echo "✅ ${DEMO_NAME} 编译并安装完成。"
+    echo "✅ ${DEMO_NAME} has been compiled and installed successfully."
     cd "${ROOT_PWD}"
 done
 
 echo "==========================================="
-echo "所有编译任务已完成！"
-echo "程序包位于: ${FINAL_INSTALL_DIR}"
+echo "All compilation tasks have been completed!"
+echo "The package is located at: ${FINAL_INSTALL_DIR}"
 ls -l "${FINAL_INSTALL_DIR}"
 echo "==========================================="

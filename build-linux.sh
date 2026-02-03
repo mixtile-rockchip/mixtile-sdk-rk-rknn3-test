@@ -53,13 +53,13 @@ if [ -z ${TARGET_SOC} ] || [ -z ${BUILD_DEMO_NAME} ]; then
   exit -1
 fi
 
-# 设置编译器
+# Set the compiler
 if [ "${TARGET_SOC}" = "x86" ]; then
-    # x86平台使用系统默认编译器
+    # The x86 platform uses the default compiler of the system
     export CC=gcc
     export CXX=g++
 else
-    # 其他平台使用交叉编译器
+    # Other platforms use cross-compilers
     echo "$GCC_COMPILER"
     export CC=${GCC_COMPILER}-gcc
     export CXX=${GCC_COMPILER}-g++
@@ -138,7 +138,7 @@ if [[ -n ${TARGET_ARCH} ]];then
     TARGET_PLATFORM=${TARGET_PLATFORM}_${TARGET_ARCH}
 fi
 
-# 对于x86平台，简化平台名称
+# For the x86 platform, simplify the platform name
 if [ "${TARGET_SOC}" = "x86" ]; then
     TARGET_PLATFORM="x86_64"
     DISABLE_RGA=ON
@@ -173,7 +173,7 @@ fi
 
 cd ${BUILD_DIR}
 
-# 对于x86平台，可能需要不同的CMake配置
+# For the x86 platform, different CMake configurations may be required
 if [ "${TARGET_SOC}" = "x86" ]; then
     cmake ../../${BUILD_DEMO_PATH} \
         -DTARGET_SOC=${TARGET_SOC} \
