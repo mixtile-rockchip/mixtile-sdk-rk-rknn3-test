@@ -7,10 +7,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (ENABLE_ASAN)
-	message(STATUS "BUILD WITH ADDRESS SANITIZER")
-	set (CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
-	set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
-	set (CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
+    message(STATUS "BUILD WITH ADDRESS SANITIZER")
+    set (CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
+    set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
+    set (CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
 endif ()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../rknn/rknn3-model-zoo/3rdparty/ 3rdparty.out)
@@ -52,8 +52,9 @@ target_link_directories(${PROJECT_NAME} PRIVATE
 
 # Link with static librknnsmi.a (which includes chips_connect_rc_static and libpci)
 target_link_libraries(${PROJECT_NAME}
-	imageutils
+    imageutils
     fileutils
+    cmdlineparser
     ${LIBRKNNAPI}
     ${LIBTOKENIZER}
     ${RKNNSMI_LIB_DIR}/librknnsmi.a
@@ -62,15 +63,15 @@ target_link_libraries(${PROJECT_NAME}
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     target_link_libraries(${PROJECT_NAME}
-    log
-)
+        log
+    )
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(${PROJECT_NAME}
         pthread
         atomic
-)
+    )
 endif()
 
 install(TARGETS ${PROJECT_NAME} DESTINATION .)

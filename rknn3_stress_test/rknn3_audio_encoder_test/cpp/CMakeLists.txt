@@ -7,10 +7,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (ENABLE_ASAN)
-	message(STATUS "BUILD WITH ADDRESS SANITIZER")
-	set (CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
-	set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
-	set (CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
+    message(STATUS "BUILD WITH ADDRESS SANITIZER")
+    set (CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
+    set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
+    set (CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
 endif ()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../rknn/rknn3-model-zoo/3rdparty/ 3rdparty.out)
@@ -38,8 +38,9 @@ target_link_directories(${PROJECT_NAME} PRIVATE
 )
 
 target_link_libraries(${PROJECT_NAME}
-	audioutils
+    audioutils
     fileutils
+    cmdlineparser
     ${LIBRKNNAPI}
     ${RKNNSMI_LIB_DIR}/librknnsmi.a
     dl
@@ -47,8 +48,8 @@ target_link_libraries(${PROJECT_NAME}
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     target_link_libraries(${PROJECT_NAME}
-    log
-)
+        log
+    )
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")

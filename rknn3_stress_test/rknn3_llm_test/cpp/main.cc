@@ -9,10 +9,10 @@
 #include <unistd.h>
 
 #include "Tokenizer.h"
+#include "cmdline_parser.h"
+#include "easy_timer.h"
 #include "float16.h"
 #include "rknn3_api.h"
-#include "easy_timer.h"
-#include "MemoryMonitor.h"
 
 #define LOGW(fmt, ...) printf("\033[33m" fmt "\033[0m", ##__VA_ARGS__)
 
@@ -20,44 +20,6 @@ rknn3_session *session = nullptr;
 
 // struct timeval start, first_token, end;
 TIMER first_token, decode_time_ms;
-
-// 内存监控器实例
-MemoryMonitor* memory_monitor = nullptr;
-
-// 打印内存统计数据
-void print_memory_statistics(const MemoryStatistics& stats) {
-    if (!stats.is_valid) {
-        printf("[MemoryMonitor] No valid statistics available\n");
-        return;
-    }
-
-    printf("\n===== Memory Usage Statistics =====\n");
-    printf("Total monitoring duration: %.3f seconds\n", stats.total_duration_seconds);
-    printf("Total samples collected: %u\n\n", stats.total_samples);
-
-    for (const DeviceMemoryStats& dev : stats.devices) {
-        printf("Device[%d] Chip[%d] Statistics:\n", dev.device_id, dev.chip_id);
-        printf("  Total Memory: %.2f MB\n", dev.total_memory / 1024.0f / 1024.0f);
-        printf("  Memory Usage:\n");
-        printf("    Peak:    %.2f MB (%.1f%%)\n",
-               dev.peak_used_memory / 1024.0f / 1024.0f, dev.peak_usage_percent);
-        printf("    Average: %.2f MB (%.1f%%)\n",
-               dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
-        printf("    Min:     %.2f MB (%.1f%%)\n",
-               dev.min_used_memory / 1024.0f / 1024.0f, dev.min_usage_percent);
-        printf("  Free Memory:\n");
-        printf("    Min:     %.2f MB\n", dev.min_free_memory / 1024.0f / 1024.0f);
-        printf("    Average: %.2f MB\n", dev.avg_free_memory / 1024.0f / 1024.0f);
-        printf("    Max:     %.2f MB\n", dev.max_free_memory / 1024.0f / 1024.0f);
-        printf("  DDR Frequency:\n");
-        printf("    Max: %u MHz, Avg: %u MHz, Min: %u MHz\n",
-               dev.max_ddr_freq, dev.avg_ddr_freq, dev.min_ddr_freq);
-        printf("  Sample count: %u (%.3f seconds)\n\n",
-               dev.sample_count, dev.duration_seconds);
-    }
-    printf("===================================\n\n");
-}
-// struct timeval decode, decode_tmp;
 
 static bool first_decode = true;
 struct embedding_info {
@@ -197,7 +159,6 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
         return -1;
     }
 
-
     // 检查devices指针是否有效
     if (devs.devices == NULL) {
         printf("[rknn3_stress_test_error] rknn3_find_devices returned n_devices > 0 but devices is NULL!\n");
@@ -216,10 +177,10 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
     rknn3_init_extend extend;
     memset(&extend, 0, sizeof(extend));
 
-     // 根据是否指定了设备ID来设置
+    // 根据是否指定了设备ID来设置
     if (device_id != nullptr) {
         // 使用指定的设备ID
-        extend.device_id = (char*)device_id;
+        extend.device_id = (char *)device_id;
         printf("[rknn3_stress_test_log] Using specified device ID: %s\n", device_id);
     } else {
         // 多个设备时，使用第一个设备的ID
@@ -249,9 +210,16 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
         rknn3_destroy(ctx);
         return -1;
     }
+
+    if (core_mask == 0) {
+        // 自动生成core_mask：从0位开始对应core_number个核心
+        for (uint32_t i = 0; i < model_core_num; i++) {
+            core_mask |= (1 << i);
+        }
+        printf("Auto-generated core_mask: 0x%x for %d cores\n", core_mask, model_core_num);
+    }
     printf("[rknn3_stress_test_log] Model requires %u NPU cores\n", model_core_num);
     printf("[rknn3_stress_test_log] User specified core_mask: 0x%x\n", core_mask);
-
     // set config
     memset(&config, 0, sizeof(config));
     config.run_core_mask = core_mask;
@@ -304,26 +272,8 @@ int get_tokenizer_and_embedding(const char *tokenizer_path, VocabInfo *vocab_inf
     return 0;
 }
 
-void print_usage(char *argv[]) {
-    printf("Usage:\n");
-    printf("%s [options]\n\n", argv[0]);
-    printf("Options:\n");
-    printf("  -m, --model_path      \n");
-    printf("  -w, --model_weight     \n");
-    printf("  -tk, --tokenizer      \n");
-    printf("  -em, --embedding      \n");
-    printf("  -c, --core_mask   \n");
-    printf("  -ctx,--max_context_len \n");
-    printf("  -ni,--n_input_tokens \n");
-    printf("  -no,--max_new_tokens \n");
-    printf("  -cl, --cnt_loop  default:1 \n");
-    printf("  -tl, --time_loop(hours) \n");
-    printf("  -d, --device_id       specify device ID\n");
-    printf("  -mm, --enable_memory_monitor  enable memory monitoring (default: disabled) \n");
-    printf("\nUse '%s --help' to display this message.\n", argv[0]);
-
-    return;
-}
+// Use common print_usage from cmdline_parser
+// void print_usage(char *argv[]) { ... }
 
 static void check_perfance(float last_perf, float cur_perf, int32_t last_decode_tokens, int32_t cur_decode_tokens) {
     if (last_perf <= 0) {
@@ -331,20 +281,20 @@ static void check_perfance(float last_perf, float cur_perf, int32_t last_decode_
         return;
     }
 
-    // 检测 decode_tokens 是否一致
+    // check decode_tokens consistency
     if (last_decode_tokens != cur_decode_tokens) {
         fprintf(stderr, "[rknn3_model_stress_test_error] decode_tokens inconsistency! (last=%d, cur=%d)\n",
                 last_decode_tokens, cur_decode_tokens);
-        exit(EXIT_FAILURE);  // 异常退出
+        exit(EXIT_FAILURE);  // terminate test
     }
 
     float diff = fabsf(cur_perf - last_perf);
-    float ratio = diff / last_perf;  // 抖动比例
+    float ratio = diff / last_perf;  //    test jitter ratio
 
     if (ratio > 0.5f) {
         fprintf(stderr, "[rknn3_model_stress_test_error] perf jitter %.2f%% exceeds 20%% (last=%.3f, cur=%.3f)\n",
                 ratio * 100, last_perf, cur_perf);
-        exit(EXIT_FAILURE);  // 异常退出
+        exit(EXIT_FAILURE);  // terminate test
     } else if (ratio > 0.2f) {
         fprintf(stderr, "[rknn3_model_stress_test_warnning] perf jitter %.2f%% exceeds 10%% (last=%.3f, cur=%.3f)\n",
                 ratio * 100, last_perf, cur_perf);
@@ -354,54 +304,29 @@ static void check_perfance(float last_perf, float cur_perf, int32_t last_decode_
 #define RKNN3_DEFAULT_DEVICE_ID 0
 int main(int argc, char **argv) {
     int ret = 0;
-    char *model_path = NULL;
-    char *weight_path =  NULL;
-    const char *tokenizer_path =  NULL;
-    const char *embedding_path =  NULL;
-    // const char *device_id = NULL;
-    int32_t max_context_len = 0;
-    uint64_t n_input_tokens = 128;
-    int32_t max_new_tokens = 128;
-    uint32_t core_mask = 0xff;
-    uint32_t cnt_loop = 1;
-    float time_loop = 0.f;
-    uint32_t device_id = 0;
-    bool enable_memory_monitor = false;
 
-     for (int i = 1; i < argc; i += 2) {
-        if (strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--model_path") == 0) {
-            model_path = argv[i + 1];
-        } else if (strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "--model_weight") == 0) {
-            weight_path = argv[i + 1];
-        } else if (strcmp(argv[i], "-tk") == 0 || strcmp(argv[i], "--tokenizer") == 0) {
-            tokenizer_path = argv[i + 1];
-        } else if (strcmp(argv[i], "-em") == 0 || strcmp(argv[i], "--embedding") == 0) {
-            embedding_path = argv[i + 1];
-        } else if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--core_mask") == 0) {
-            core_mask = strtoul(argv[i + 1],nullptr, 16);
-        } else if (strcmp(argv[i], "-cl") == 0 || strcmp(argv[i], "--cnt_loop") == 0) {
-            cnt_loop = atoi(argv[i + 1]);
-        } else if(strcmp(argv[i], "-tl") == 0 || strcmp(argv[i], "--time_loop") == 0) {
-            time_loop = atof(argv[i + 1]);
-        }else if(strcmp(argv[i], "-ctx") == 0 || strcmp(argv[i], "--max_context_len") == 0) {
-            max_context_len = atoi(argv[i + 1]);
-        } else if(strcmp(argv[i], "-ni") == 0 || strcmp(argv[i], "--n_input_tokens") == 0) {
-            n_input_tokens = atoi(argv[i+1]);
-        }else if (strcmp(argv[i], "-no") == 0 || strcmp(argv[i], "--max_new_tokens") == 0){
-            max_new_tokens = atoi(argv[i+1]);
-        } else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0){
-            device_id = atoi(argv[i+1]);  // 指定设备ID
-        } else if (strcmp(argv[i], "-mm") == 0 || strcmp(argv[i], "--enable_memory_monitor") == 0) {
-            enable_memory_monitor = true;
-            i--;  // This flag doesn't have a value, so decrement i to compensate for i += 2
-        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            print_usage(argv);
-            return 0;
-        }else {
-            printf("[rknn3_model_stress_test_error] Unknown option: %s\n", argv[i]);
-            return -1;
-        }
+    // Parse command line arguments
+    cmdline_args_t args;
+    ret = parse_cmdline_args(argc, argv, &args);
+    if (ret != 0 || args.show_help) {
+        print_usage(argv[0], PROGRAM_TYPE_LLM, NULL, 0);
+        free_cmdline_args(&args);
+        return args.show_help ? 0 : -1;
     }
+
+    // Validate required arguments using common function
+    ret = validate_required_params(&args, PROGRAM_TYPE_LLM);
+    if (ret != 0) {
+        print_usage(argv[0], PROGRAM_TYPE_LLM, NULL, 0);
+        free_cmdline_args(&args);
+        return -1;
+    }
+
+    // Handle time_loop override
+    handle_time_loop_override(&args, PROGRAM_TYPE_LLM);
+
+    // Print configuration using common function
+    print_configuration(&args, PROGRAM_TYPE_LLM);
 
     rknn3_devices devs;
     rknn3_context ctx = 0;
@@ -421,51 +346,45 @@ int main(int argc, char **argv) {
 
     int i = 0;
     int llm_n_inputs = 1;
-
-    // float ttft_us = 0.0f;
+    int64_t tot_memory = 0;
     int prefill_n_tokens = 0;
     float prefill_per_second = 0.f;
 
-    // Save memory statistics before monitor is deleted
-    MemoryStatistics saved_mem_stats;
-    // float decode_time_us = 0.f;
     float tpot = 0.f;
     float tps = 0.f;
     float total_time = 0.f;
     float infer_total_time = 0.f;
-
+    float print_interval = 1 * 1000 * 40;  // 40s
     float last_time = 0.0f;
     int32_t last_decode_tokens = 0;
-    TIMER cost_time;    // 记录累计运行总时间
-    TIMER cur_time;     // 记录当前单次推理时间
-    float print_log_ms = 1.f *1000.f*60.f; // 1min print
+    TIMER cost_time;
+    TIMER cur_time;
     float acc_ms = 0.f;
     int acc_cnt = 0;
 
     int iter = 0;
-    float time_limit_ms = (time_loop != 0) ? (time_loop * 3600.0f * 1000.0f) : -1.0f;
+    float time_limit_ms = (args.time_loop != 0) ? (args.time_loop * 3600.0f * 1000.0f) : -1.0f;
 
-    rknn3_llm_infer_param llm_infer_param = { .keep_history = 0, .max_new_tokens = max_new_tokens };
+    rknn3_llm_infer_param llm_infer_param = { .keep_history = 0, .max_new_tokens = args.max_new_tokens };
     rknn3_llm_input llm_inputs[llm_n_inputs];
-    // Generate fixed tokens for performance testing
-    std::vector<int32_t> tokens(n_input_tokens);
+    std::vector<int32_t> tokens(args.n_input_tokens);
 
-    rknn3_llm_tensor input_tensor = { .name = NULL, .prompt = NULL, .embed = NULL, .tokens = tokens.data(), .n_tokens = n_input_tokens };
+    rknn3_llm_tensor input_tensor = { .name = NULL, .prompt = NULL, .embed = NULL, .tokens = tokens.data(), .n_tokens = args.n_input_tokens };
     rknn3_llm_input input;
-
 
     printf("*******************************RKNN3_LLM_TEST**********************************\n");
 
-    // uint32_t device_id = vision_ctx->device_id;
     // 获取目前连接的RK182X信息
     rknn3_devices rknn3_devices;
-    memset(&rknn3_devices, 0 ,sizeof(rknn3_devices));
+    memset(&rknn3_devices, 0, sizeof(rknn3_devices));
     ret = rknn3_find_devices(&rknn3_devices);
     if (ret != RKNN3_SUCCESS || rknn3_devices.n_devices <= 0) {
         printf("find devices failed, or data is invalid: %d\n", ret);
+        free_cmdline_args(&args);
         return ret;
     }
 
+    uint32_t device_id = args.device_id;
     if (device_id >= rknn3_devices.n_devices) {
         printf("warning!!! device_id = %d is not allow ,use default:%d, %s, %d\n", device_id, RKNN3_DEFAULT_DEVICE_ID, __FUNCTION__, __LINE__);
         device_id = RKNN3_DEFAULT_DEVICE_ID;
@@ -473,45 +392,80 @@ int main(int argc, char **argv) {
 
     printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
 
-    // Initialize memory monitor only if enabled
-    if (enable_memory_monitor) {
-        memory_monitor = new MemoryMonitor(100000); // 100ms monitoring interval
-
-        // Set target device(s) to monitor (only monitor the device used for inference)
-        std::vector<uint16_t> target_devices = {(uint16_t)device_id};
-        memory_monitor->set_target_devices(target_devices);
-
-        if (!memory_monitor->initialize()) {
-            printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
-            delete memory_monitor;
-            memory_monitor = nullptr;
-        } else {
-            memory_monitor->set_realtime_print(false);
-            printf("[rknn3_model_stress_test] Memory monitor initialized successfully with 100ms interval\n");
-        }
-    }
-
-    rknn3_init_extend init_extend = {0};
+    rknn3_init_extend init_extend = { 0 };
     init_extend.device_id = rknn3_devices.devices[device_id].id;
     char device_id_mac[128];
-    memcpy(device_id_mac,rknn3_devices.devices[device_id].id,sizeof(rknn3_devices.devices[device_id].id));
+    memcpy(device_id_mac, rknn3_devices.devices[device_id].id, sizeof(rknn3_devices.devices[device_id].id));
+
+    TIMER init_timer;
+    init_timer.tik();
     // init context and model
-    ctx = init_context_and_model(model_path, weight_path, core_mask, device_id_mac);
+    ctx = init_context_and_model(args.model_path, args.weight_path, args.core_mask, device_id_mac);
     if (ctx < 0) {
         printf("[rknn3_model_stress_test_error] rknn3_session_init_model fail! ctx=%lu\n", ctx);
+        free_cmdline_args(&args);
         goto exit;
     }
+    init_timer.tok();
 
+    {
+        // Query model required core number
+        uint32_t model_core_num = 0;
+        ret = rknn3_query(ctx, RKNN3_QUERY_CORE_NUMBER, &model_core_num, sizeof(model_core_num));
+        if (ret < 0) {
+            printf("[rknn3_model_stress_test_error] rknn3_query core number failed! ret=%d\n", ret);
+            goto exit;
+        }
+        rknn3_core_mem_size *core_mem_sizes_llm = (rknn3_core_mem_size *)malloc(sizeof(rknn3_core_mem_size) * model_core_num);
+
+        if (!core_mem_sizes_llm) {
+            printf("Failed to allocate memory for core_mem_sizes_llm\n");
+            ret = -1;
+            goto exit;
+        }
+        free(core_mem_sizes_llm);
+
+        rknn3_allocation_info* allocation_info = (rknn3_allocation_info *)malloc(sizeof(rknn3_allocation_info)*model_core_num);
+        if (!allocation_info) {
+            printf("Failed to allocate memory for allocation_info\n");
+            ret = -1;
+            goto exit;
+        }
+        ret = rknn3_query(ctx, RKNN3_QUERY_ALLOCATION_INFO, allocation_info, sizeof(rknn3_allocation_info)*model_core_num);
+        if (ret < 0) {
+            printf("rknn3_query allocation info failed! ret=%d\n", ret);
+            free(allocation_info);
+            allocation_info = NULL;
+            goto exit;
+        }
+        // printf("allocation_info[i].weight_mem.size: %d\n",allocation_info[0].weight_mem.size);
+        for(int i = 0;i < model_core_num;i ++){
+            // printf("id:%d,allocation_info.weights_size=%d, allocation_info.internal_size=%d, allocation_info.weights_mem_size=%d, allocation_info.internal_mem_size=%d\n",
+            //     i,allocation_info[i].weight_mem.size, allocation_info[i].internal_mem.size, 
+            //     allocation_info[i].command_mem.size, allocation_info[i].kvcache_mem.size);
+            tot_memory += allocation_info[i].weight_mem.size;
+            tot_memory += allocation_info[i].internal_mem.size;
+            tot_memory += allocation_info[i].command_mem.size;
+            tot_memory += allocation_info[i].kvcache_mem.size;
+        
+        }
+        if(allocation_info) {
+            free(allocation_info);
+            allocation_info = NULL;
+        }
+    }
+    // printf("----------tot_memory:%ld\n",tot_memory);
     // get_tokenizer_and_embedding
-    ret = get_tokenizer_and_embedding(tokenizer_path, &vocab_info, &tokenizer, &embedding_info, embedding_path, &emb_st);
+    ret = get_tokenizer_and_embedding(args.tokenizer_path, &vocab_info, &tokenizer, &embedding_info, args.embedding_path, &emb_st);
     if (ret < 0) {
         printf("[rknn3_model_stress_test_error] get_tokenizer_and_embedding fail! ret=%d\n", ret);
+        free_cmdline_args(&args);
         goto exit;
     }
 
     // set session params
     params.logits_name = (char *)"output";
-    params.max_context_len = max_context_len;
+    params.max_context_len = args.max_context_len;
     params.sampling_param.temperature = 1.0f;
     params.sampling_param.top_k = 1;
     params.sampling_param.top_p = 0.9f;
@@ -554,7 +508,7 @@ int main(int argc, char **argv) {
     // printf("max_new_tokens %d\n", max_new_tokens);
 
     srand(42);  // Use fixed seed
-    for (i = 0; i < n_input_tokens; i++) {
+    for (i = 0; i < args.n_input_tokens; i++) {
         tokens[i] = rand() % 1024;
     }
 
@@ -564,10 +518,6 @@ int main(int argc, char **argv) {
 
     cost_time.tik();
 
-    if (memory_monitor) {
-        memory_monitor->start_monitoring();
-    }
-
     while (true) {
         // 1. 记录单次推理开始时间 (用于 TTFT 和基础计时)
         // gettimeofday(&start, NULL);
@@ -575,7 +525,6 @@ int main(int argc, char **argv) {
         cur_time.tik();
         first_token.tik();
         first_decode = true;
-
 
         ret = rknn3_session_run(session, llm_inputs, llm_n_inputs, &llm_infer_param);
         if (ret != RKNN3_SUCCESS) {
@@ -594,8 +543,8 @@ int main(int argc, char **argv) {
         cost_time.tok();
         // gettimeofday(&end, NULL);
 
-        total_time = cur_time.get_time(); // 当前单次耗时
-        infer_total_time = cost_time.get_time(); // 累计运行耗时
+        total_time = cur_time.get_time();         // 当前单次耗时
+        infer_total_time = cost_time.get_time();  // 累计运行耗时
 
         // 查询当前 state 以获取 decode_tokens
         ret = rknn3_session_query_state(session, &state);
@@ -605,7 +554,7 @@ int main(int argc, char **argv) {
         }
 
         // 4. 性能波动检查
-        if (last_time != 0.0f || (time_loop != 0 ? infer_total_time > 5000.0f : iter > 10)) {
+        if (last_time != 0.0f || (args.time_loop != 0 ? infer_total_time > 5000.0f : iter > 10)) {
             check_perfance(last_time, total_time, last_decode_tokens, state.n_decode_tokens);
         }
         last_time = total_time;
@@ -613,40 +562,34 @@ int main(int argc, char **argv) {
 
         // 5. 迭代计数更新
         iter++;
-        acc_cnt ++;
+        acc_cnt++;
         acc_ms += total_time;
 
-        if(acc_cnt >= 100) {
-            printf("run_cnt diff: %d, run cost: %8.2f ms \n",acc_cnt,acc_ms);
+        // if (acc_cnt >= 100) {
+        //     printf("[rknn3_model_stress_test_log] run_cnt diff: %d, run cost: %8.2f ms \n", acc_cnt, acc_ms);
+        //     acc_cnt = 0;
+        //     acc_ms = 0.0f;
+        // }
+        if (acc_ms >= print_interval) {
+            printf("run_cnt : %d, run cost: %8.2f ms \n", iter, infer_total_time);
             acc_cnt = 0;
             acc_ms = 0.0f;
         }
 
         // 6. 统一退出条件判断
-        if (time_loop != 0.f) {
+        if (args.time_loop != 0.f) {
             // 时间模式：达到指定小时数退出
             if (infer_total_time >= time_limit_ms) {
                 infer_total_time = infer_total_time;
-                printf("Time limit reached. cost_time: %8.3f h\n", infer_total_time/1000.f/60.f/60.f);
+                printf("[rknn3_model_stress_test_log] Time limit reached. cost_time: %8.3f h\n", infer_total_time / 1000.f / 60.f / 60.f);
                 break;
             }
         } else {
             // 次数模式：达到指定次数退出
-            // printf("run cnt: %d / %d \n",iter,cnt_loop);
-            if (iter >= cnt_loop) {
+            if (iter >= args.cnt_loop) {
                 break;
             }
         }
-    }
-
-    // Stop memory monitoring and get statistics (value copy)
-    if (memory_monitor) {
-        memory_monitor->stop_monitoring();
-        saved_mem_stats = memory_monitor->get_statistics();
-
-        // Cleanup memory monitor now (this will print library logs)
-        delete memory_monitor;
-        memory_monitor = nullptr;
     }
 
     ret = rknn3_session_query_state(session, &state);
@@ -683,14 +626,14 @@ exit:
         delete tokenizer;
     }
 
-    if(ret == 0) {
-        const char *last_slash = strrchr(model_path, '/');
+    if (ret == 0) {
+        const char *last_slash = strrchr(args.model_path, '/');
         const char *filename;
 
         if (last_slash != NULL) {
             filename = last_slash + 1;
         } else {
-            filename = model_path;
+            filename = args.model_path;
         }
 
         char model_name[256];
@@ -703,54 +646,36 @@ exit:
             }
         }
 
-        // TTFT 计算
-        // ttft_us = (first_token.tv_sec - start.tv_sec) * 1000000 + (first_token.tv_usec - start.tv_usec);
         float ttft_ms = first_token.get_time();
-        // first_token.print_time("TTFT: ");
-        // printf("\nTTFT: %.3f s (%.3f ms)\n", ttft_us / 1000000.0, ttft_us / 1000.0);
 
-        // Prefill 计算
         prefill_n_tokens = state.n_prefill_tokens;
         prefill_per_second = prefill_n_tokens / (ttft_ms / 1000.0);
 
-        // TPOT 计算
-        // decode_time_us = ((end.tv_sec - first_token.tv_sec) * 1000000) + (end.tv_usec - first_token.tv_usec);
         if (state.n_decode_tokens > 0) {
             tpot = decode_time_ms.get_time() / state.n_decode_tokens;
             tps = state.n_decode_tokens / (decode_time_ms.get_time() / 1000.0);
-
         }
+
         printf("[rknn3_model_stress_test_done]\n");
-        // Total time
         float final_total_time = (first_token.get_time() + decode_time_ms.get_time()) / 1000.0;
 
         printf("\n===== RKNN3_LLM_TEST Results Summary =====\n\n");
-        printf("Model: %s\n",model_name);
-        printf("DeviceID: %s\n",device_id_mac);
+        printf("Model: %s\n", model_name);
+        printf("DeviceID: %s\n", device_id_mac);
+        printf("LoadModelCost: %.3f ms\n", init_timer.get_time());
+        printf("ModelMemory: %ld MB\n", tot_memory / (1024 * 1024));
         printf("TTFT: %.3f ms\n", ttft_ms);
         printf("TPOT: %.3f ms\n", tpot);
         printf("Prefill: %.3f tokens/s\n", prefill_per_second);
         printf("TPS: %.3f tokens/s\n", tps);
-        printf("TotalTime: %.3f ms\n",infer_total_time);
-        printf("TotalRuns: %d\n",iter);
-
-        // Print memory usage statistics (use saved data from exit section)
-        bool has_valid_data = saved_mem_stats.is_valid && !saved_mem_stats.devices.empty();
-        if (has_valid_data) {
-            const DeviceMemoryStats& dev = saved_mem_stats.devices[0];
-            printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
-                   dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
-            printf("AvgNpuUtilization: %u%%\n", dev.avg_npu_util);
-        } else {
-            printf("AvgMemoryUsage: unavailable\n");
-            printf("AvgNpuUtilization: unavailable\n");
-        }
-
+        printf("TotalTime: %.3f ms\n", infer_total_time);
+        printf("TotalRuns: %d\n", iter);
         printf("\n=================================\n");
         printf("[rknn3_model_stress_test_done]\n");
     }
     fflush(stdout);
 
+    free_cmdline_args(&args);
 
     return 0;
 }

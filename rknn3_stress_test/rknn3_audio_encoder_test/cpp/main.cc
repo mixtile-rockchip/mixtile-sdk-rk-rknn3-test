@@ -28,6 +28,7 @@
 #include "easy_timer.h"
 #include "audio_utils.h"
 #include "rknn3_audio_encoder_test.h"
+#include "cmdline_parser.h"
 
 TIMER audio_encode_timer;
 TIMER total_infer_timer;
@@ -57,93 +58,41 @@ void print_usage(char *argv[]) {
                   Main Function
 -------------------------------------------*/
 int main(int argc, char **argv) {
-    char *audio_model_path = NULL;
-    char *audio_weight_path = NULL;
-    void *audio_core_mask = NULL;
-    char *audio_path = NULL;
-    int audio_loop = 1;
-    float time_loop = 0.f;
-    uint32_t device_id = 0;
-    bool enable_memory_monitor = false;
+    int ret = 0;
 
-    // Parse command line arguments
-    for (int i = 1; i < argc; i += 2) {
-        if (strcmp(argv[i], "-am") == 0 || strcmp(argv[i], "--audio_model") == 0) {
-            audio_model_path = argv[i + 1];
-        } else if (strcmp(argv[i], "-aw") == 0 || strcmp(argv[i], "--audio_weight") == 0) {
-            audio_weight_path = argv[i + 1];
-        } else if (strcmp(argv[i], "-ac") == 0 || strcmp(argv[i], "--audio_core") == 0) {
-            audio_core_mask = (void *)(uintptr_t)strtoul(argv[i + 1], NULL, 16);
-        } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--audio_path") == 0) {
-            audio_path = argv[i + 1];
-        } else if (strcmp(argv[i], "-al") == 0 || strcmp(argv[i], "--audio_loop") == 0) {
-            audio_loop = atoi(argv[i + 1]);
-        } else if (strcmp(argv[i], "-tl") == 0 || strcmp(argv[i], "--time_loop") == 0) {
-            time_loop = atof(argv[i + 1]);
-        } else if (strcmp(argv[i], "-id") == 0 || strcmp(argv[i], "--device_id") == 0) {
-            device_id = atoi(argv[i + 1]);
-        } else if (strcmp(argv[i], "-mm") == 0 || strcmp(argv[i], "--enable_memory_monitor") == 0) {
-            enable_memory_monitor = true;
-            i--;  // This flag doesn't have a value, so decrement i to compensate for i += 2
-        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            print_usage(argv);
-            return 0;
-        } else {
-            printf(RKNN3_AUDIO_ENC_ERR "Unknown option: %s\n", argv[i]);
-            return -1;
-        }
+    // Parse command line arguments using common parser
+    cmdline_args_t args;
+    ret = parse_cmdline_args(argc, argv, &args);
+    if (ret != 0 || args.show_help) {
+        print_usage(argv[0], PROGRAM_TYPE_AUDIO, NULL, 0);  // Use AUDIO type for audio-specific usage
+        free_cmdline_args(&args);
+        return args.show_help ? 0 : -1;
     }
 
-    printf("\n===== RKNN3 Audio Encoder Stress Test =====\n");
-    printf("audio_model: %s\n", audio_model_path);
-    printf("audio_weight: %s\n", audio_weight_path);
-    printf("audio_core_mask: %p\n", audio_core_mask);
-    printf("audio_path: %s\n", audio_path);
-    printf("audio_loop: %d\n", audio_loop);
-    printf("device_id: %d\n", device_id);
-    printf("time_loop: %.2f hours\n", time_loop);
-    printf("==========================================\n\n");
+    // Define program type for audio (using custom approach since not directly supported)
+    // Map audio-specific parameters from common args
+    char *audio_model_path = args.model_path;
+    char *audio_weight_path = args.weight_path;
+    uint32_t audio_core_mask = args.core_mask;
+    char *audio_path = args.image_path;  // Reuse image_path for audio_path
+    int audio_loop = args.cnt_loop;
+    float time_loop = args.time_loop;
+    uint32_t device_id = args.device_id;
+    bool enable_memory_monitor = args.enable_memory_monitor;
 
-    // Check required arguments
-    if (!audio_model_path) {
-        printf(RKNN3_AUDIO_ENC_ERR "Missing audio_model_path\n");
-        print_usage(argv);
-        return -1;
-    }
-    if (!audio_weight_path) {
-        printf(RKNN3_AUDIO_ENC_ERR "Missing audio_weight_path\n");
-        print_usage(argv);
-        return -1;
-    }
-    if (!audio_path) {
-        printf(RKNN3_AUDIO_ENC_ERR "Missing audio_path\n");
-        print_usage(argv);
-        return -1;
-    }
-    if (audio_core_mask == 0) {
-        printf(RKNN3_AUDIO_ENC_ERR "Invalid audio_core_mask (must not be 0)\n");
-        print_usage(argv);
+    // Validate required arguments for audio encoder using common function
+    ret = validate_required_params(&args, PROGRAM_TYPE_AUDIO);
+    if (ret != 0) {
+        print_usage(argv[0], PROGRAM_TYPE_AUDIO, NULL, 0);
+        free_cmdline_args(&args);
         return -1;
     }
 
-    // Validate device_id
-    if (device_id < 0) {
-        printf(RKNN3_AUDIO_ENC_WRN "device_id = %d is invalid, using default: 0\n", device_id);
-        device_id = 0;
-    }
+    // Handle time_loop override
+    handle_time_loop_override(&args, PROGRAM_TYPE_AUDIO);
 
-    // Validate loop parameters
-    if (time_loop == 0.f && audio_loop <= 0) {
-        printf(RKNN3_AUDIO_ENC_ERR "Invalid loop configuration: audio_loop=%d, time_loop=%.2f\n", audio_loop, time_loop);
-        printf(RKNN3_AUDIO_ENC_ERR "Please set audio_loop > 0 or time_loop > 0\n");
-        return -1;
-    }
-
-    if (time_loop != 0.f) {
-        audio_loop = 1; // Time mode overrides count mode
-    }
-
-    int ret;
+    // Print configuration using common function
+    print_configuration(&args, PROGRAM_TYPE_AUDIO);
 
     // RKNN Context
     rknn_audio_encoder_context_t rknn_app_ctx;
@@ -166,7 +115,7 @@ int main(int argc, char **argv) {
 
     // Init audio encoder model
     ret = init_audio_encoder_test(&rknn_app_ctx, audio_model_path, audio_weight_path,
-                                   (uint32_t)(uintptr_t)audio_core_mask, device_id);
+                                   audio_core_mask, device_id);
     if (ret != 0) {
         printf(RKNN3_AUDIO_ENC_ERR "init_audio_encoder_test failed! ret=%d\n", ret);
         goto out;
@@ -203,6 +152,8 @@ out:
     if (ret == 0) {
         printf(RKNN3_AUDIO_ENC_DONE);
     }
+
+    free_cmdline_args(&args);
 
     return ret;
 }
