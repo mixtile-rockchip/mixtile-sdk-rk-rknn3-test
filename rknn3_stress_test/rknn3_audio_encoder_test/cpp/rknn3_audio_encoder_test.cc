@@ -23,7 +23,6 @@
 #include "common.h"
 #include "rknn3_api.h"
 #include "audio_utils.h"
-#include "MemoryMonitor.h"
 #include <math.h>
 
 // Performance jitter check function
@@ -189,7 +188,7 @@ int release_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx)
 int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
                                   audio_buffer_t* audio,
                                   const char* model_name,
-                                  int audio_loop, float time_loop, bool enable_memory_monitor)
+                                  int audio_loop, float time_loop)
 {
     int ret;
     if (!app_ctx || !audio) {
@@ -209,23 +208,6 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
 
     printf("Output: %d audio tokens x %d embedding dim\n", n_audio_tokens, embedding_dim);
 
-    // Variables for memory statistics (declared early to avoid issues)
-    MemoryStatistics mem_stats;
-    bool has_memory_stats = false;
-
-    // Initialize memory monitor only if enabled
-    MemoryMonitor* memory_monitor = nullptr;
-    if (enable_memory_monitor) {
-        memory_monitor = new MemoryMonitor(50);
-        std::vector<uint16_t> target_devices = {(uint16_t)app_ctx->audio.device_id};
-        memory_monitor->set_target_devices(target_devices);
-
-        if (!memory_monitor->initialize()) {
-            printf(RKNN3_AUDIO_ENC_WRN "Memory monitor initialization failed, monitoring disabled\n");
-            delete memory_monitor;
-            memory_monitor = nullptr;
-        }
-    }
 
     // Prepare audio input (preprocessing: mel filter, audio preprocess, mask creation, fp16 conversion)
     // This is done ONCE before the performance test loop
@@ -233,7 +215,6 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     if (ret != 0) {
         printf(RKNN3_AUDIO_ENC_ERR "Audio input preparation failed! ret=%d\n", ret);
         free(audio_embeds);
-        if (memory_monitor) delete memory_monitor;
         return ret;
     }
 
@@ -288,13 +269,7 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     if (ret != 0) {
         printf(RKNN3_AUDIO_ENC_ERR "Audio input sync failed! ret=%d\n", ret);
         free(audio_embeds);
-        if (memory_monitor) delete memory_monitor;
         return ret;
-    }
-
-    // Start memory monitoring
-    if (memory_monitor) {
-        memory_monitor->start_monitoring();
     }
 
     total_infer_timer.tik();
@@ -364,17 +339,6 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     float total_time = total_infer_timer.get_time();
     float avgCost = acc_audio_time / infer_cnt;
 
-    // Stop memory monitoring and get statistics (value copy)
-    if (memory_monitor) {
-        memory_monitor->stop_monitoring();
-        mem_stats = memory_monitor->get_statistics();
-        has_memory_stats = true;
-
-        // Cleanup memory monitor now (this will print library logs)
-        delete memory_monitor;
-        memory_monitor = nullptr;
-    }
-
     // Sync output data from NPU and get embeddings (only for Option 2)
     #if HIDE_DATA_TRANSFER
     ret = sync_audio_output(&(app_ctx->audio));
@@ -402,24 +366,8 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     printf("TotalTime: %.2f ms\n", total_time);
     printf("TotalRuns: %d\n", infer_cnt);
 
-    // Print memory statistics from the saved copy
-    if (has_memory_stats) {
-        if (mem_stats.is_valid && !mem_stats.devices.empty()) {
-            const DeviceMemoryStats& dev = mem_stats.devices[0];
-            printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
-                   dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
-            printf("AvgNpuUtilization: %u%%\n", dev.avg_npu_util);
-        } else {
-            printf("AvgMemoryUsage: \n");
-            printf("AvgNpuUtilization: \n");
-        }
-    } else {
-        printf("AvgMemoryUsage: unavailable\n");
-        printf("AvgNpuUtilization: unavailable\n");
-    }
-
     printf("\n=================================\n");
-
     free(audio_embeds);
+    
     return 0;
 }

@@ -28,8 +28,8 @@ while getopts ":t:a:b:m:r:j:g:" opt; do
 done
 
 if [ -z ${TARGET_SOC} ]; then
-  echo "用法: $0 -t <target> -a <arch> [-b <build_type>] [-m] [-r] [-j]"
-  echo "示例: $0 -t rk3588 -a aarch64"
+  echo "Usage: $0 -t <target> -a <arch> [-b <build_type>] [-m] [-r] [-j]"
+  echo "Example: $0 -t rk3588 -a aarch64"
   exit -1
 fi
 
@@ -42,7 +42,7 @@ if [ "${TARGET_SOC}" = "x86" ]; then
 else
     # Use parameter GCC_COMPILER if provided, otherwise use environment variable
     if [ -z "$GCC_COMPILER" ]; then
-        echo "❌ No compiler specified: Please use the -g parameter or export GCC_COMPILER"
+        echo "No compiler specified: Please use the -g parameter or export GCC_COMPILER"
         exit 1
     fi
 
@@ -51,7 +51,7 @@ else
     TARGET_PLATFORM=${TARGET_SOC}_linux_${TARGET_ARCH}
 
     if ! command -v ${CC} >/dev/null 2>&1; then
-        echo "❌ The compiler was not found: ${CC}"
+        echo "The compiler was not found: ${CC}"
         exit 1
     fi
 fi
@@ -85,7 +85,7 @@ do
     done
 
     if [ -z "${BUILD_DEMO_PATH}" ]; then
-        echo "⚠️ Skip: The cpp source code directory for ${DEMO_NAME} cannot be found"
+        echo "Skip: The cpp source code directory for ${DEMO_NAME} cannot be found"
         continue
     fi
 
@@ -110,7 +110,7 @@ do
     make -j$(nproc)
     make install
     cp ${ROOT_PWD}/sh/* ${FINAL_INSTALL_DIR}/
-    echo "✅ ${DEMO_NAME} has been compiled and installed successfully."
+    echo "${DEMO_NAME} has been compiled and installed successfully."
     cd "${ROOT_PWD}"
 done
 

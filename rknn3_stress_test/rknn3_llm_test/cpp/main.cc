@@ -9,10 +9,10 @@
 #include <unistd.h>
 
 #include "Tokenizer.h"
-#include "cmdline_parser.h"
-#include "easy_timer.h"
 #include "float16.h"
 #include "rknn3_api.h"
+#include "easy_timer.h"
+#include "cmdline_parser.h"
 
 #define LOGW(fmt, ...) printf("\033[33m" fmt "\033[0m", ##__VA_ARGS__)
 
@@ -159,6 +159,7 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
         return -1;
     }
 
+
     // 检查devices指针是否有效
     if (devs.devices == NULL) {
         printf("[rknn3_stress_test_error] rknn3_find_devices returned n_devices > 0 but devices is NULL!\n");
@@ -177,10 +178,10 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
     rknn3_init_extend extend;
     memset(&extend, 0, sizeof(extend));
 
-    // 根据是否指定了设备ID来设置
+     // 根据是否指定了设备ID来设置
     if (device_id != nullptr) {
         // 使用指定的设备ID
-        extend.device_id = (char *)device_id;
+        extend.device_id = (char*)device_id;
         printf("[rknn3_stress_test_log] Using specified device ID: %s\n", device_id);
     } else {
         // 多个设备时，使用第一个设备的ID
@@ -210,16 +211,9 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
         rknn3_destroy(ctx);
         return -1;
     }
-
-    if (core_mask == 0) {
-        // 自动生成core_mask：从0位开始对应core_number个核心
-        for (uint32_t i = 0; i < model_core_num; i++) {
-            core_mask |= (1 << i);
-        }
-        printf("Auto-generated core_mask: 0x%x for %d cores\n", core_mask, model_core_num);
-    }
     printf("[rknn3_stress_test_log] Model requires %u NPU cores\n", model_core_num);
     printf("[rknn3_stress_test_log] User specified core_mask: 0x%x\n", core_mask);
+
     // set config
     memset(&config, 0, sizeof(config));
     config.run_core_mask = core_mask;
@@ -281,20 +275,20 @@ static void check_perfance(float last_perf, float cur_perf, int32_t last_decode_
         return;
     }
 
-    // check decode_tokens consistency
+    // 检测 decode_tokens 是否一致
     if (last_decode_tokens != cur_decode_tokens) {
         fprintf(stderr, "[rknn3_model_stress_test_error] decode_tokens inconsistency! (last=%d, cur=%d)\n",
                 last_decode_tokens, cur_decode_tokens);
-        exit(EXIT_FAILURE);  // terminate test
+        exit(EXIT_FAILURE);  // 异常退出
     }
 
     float diff = fabsf(cur_perf - last_perf);
-    float ratio = diff / last_perf;  //    test jitter ratio
+    float ratio = diff / last_perf;  // 抖动比例
 
     if (ratio > 0.5f) {
         fprintf(stderr, "[rknn3_model_stress_test_error] perf jitter %.2f%% exceeds 20%% (last=%.3f, cur=%.3f)\n",
                 ratio * 100, last_perf, cur_perf);
-        exit(EXIT_FAILURE);  // terminate test
+        exit(EXIT_FAILURE);  // 异常退出
     } else if (ratio > 0.2f) {
         fprintf(stderr, "[rknn3_model_stress_test_warnning] perf jitter %.2f%% exceeds 10%% (last=%.3f, cur=%.3f)\n",
                 ratio * 100, last_perf, cur_perf);
@@ -310,7 +304,6 @@ int main(int argc, char **argv) {
     ret = parse_cmdline_args(argc, argv, &args);
     if (ret != 0 || args.show_help) {
         print_usage(argv[0], PROGRAM_TYPE_LLM, NULL, 0);
-        free_cmdline_args(&args);
         return args.show_help ? 0 : -1;
     }
 
@@ -318,7 +311,6 @@ int main(int argc, char **argv) {
     ret = validate_required_params(&args, PROGRAM_TYPE_LLM);
     if (ret != 0) {
         print_usage(argv[0], PROGRAM_TYPE_LLM, NULL, 0);
-        free_cmdline_args(&args);
         return -1;
     }
 
@@ -346,7 +338,7 @@ int main(int argc, char **argv) {
 
     int i = 0;
     int llm_n_inputs = 1;
-    int64_t tot_memory = 0;
+
     int prefill_n_tokens = 0;
     float prefill_per_second = 0.f;
 
@@ -354,7 +346,7 @@ int main(int argc, char **argv) {
     float tps = 0.f;
     float total_time = 0.f;
     float infer_total_time = 0.f;
-    float print_interval = 1 * 1000 * 40;  // 40s
+
     float last_time = 0.0f;
     int32_t last_decode_tokens = 0;
     TIMER cost_time;
@@ -376,7 +368,7 @@ int main(int argc, char **argv) {
 
     // 获取目前连接的RK182X信息
     rknn3_devices rknn3_devices;
-    memset(&rknn3_devices, 0, sizeof(rknn3_devices));
+    memset(&rknn3_devices, 0 ,sizeof(rknn3_devices));
     ret = rknn3_find_devices(&rknn3_devices);
     if (ret != RKNN3_SUCCESS || rknn3_devices.n_devices <= 0) {
         printf("find devices failed, or data is invalid: %d\n", ret);
@@ -392,13 +384,11 @@ int main(int argc, char **argv) {
 
     printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
 
-    rknn3_init_extend init_extend = { 0 };
+    rknn3_init_extend init_extend = {0};
     init_extend.device_id = rknn3_devices.devices[device_id].id;
     char device_id_mac[128];
-    memcpy(device_id_mac, rknn3_devices.devices[device_id].id, sizeof(rknn3_devices.devices[device_id].id));
+    memcpy(device_id_mac,rknn3_devices.devices[device_id].id,sizeof(rknn3_devices.devices[device_id].id));
 
-    TIMER init_timer;
-    init_timer.tik();
     // init context and model
     ctx = init_context_and_model(args.model_path, args.weight_path, args.core_mask, device_id_mac);
     if (ctx < 0) {
@@ -406,55 +396,7 @@ int main(int argc, char **argv) {
         free_cmdline_args(&args);
         goto exit;
     }
-    init_timer.tok();
 
-    {
-        // Query model required core number
-        uint32_t model_core_num = 0;
-        ret = rknn3_query(ctx, RKNN3_QUERY_CORE_NUMBER, &model_core_num, sizeof(model_core_num));
-        if (ret < 0) {
-            printf("[rknn3_model_stress_test_error] rknn3_query core number failed! ret=%d\n", ret);
-            goto exit;
-        }
-        rknn3_core_mem_size *core_mem_sizes_llm = (rknn3_core_mem_size *)malloc(sizeof(rknn3_core_mem_size) * model_core_num);
-
-        if (!core_mem_sizes_llm) {
-            printf("Failed to allocate memory for core_mem_sizes_llm\n");
-            ret = -1;
-            goto exit;
-        }
-        free(core_mem_sizes_llm);
-
-        rknn3_allocation_info* allocation_info = (rknn3_allocation_info *)malloc(sizeof(rknn3_allocation_info)*model_core_num);
-        if (!allocation_info) {
-            printf("Failed to allocate memory for allocation_info\n");
-            ret = -1;
-            goto exit;
-        }
-        ret = rknn3_query(ctx, RKNN3_QUERY_ALLOCATION_INFO, allocation_info, sizeof(rknn3_allocation_info)*model_core_num);
-        if (ret < 0) {
-            printf("rknn3_query allocation info failed! ret=%d\n", ret);
-            free(allocation_info);
-            allocation_info = NULL;
-            goto exit;
-        }
-        // printf("allocation_info[i].weight_mem.size: %d\n",allocation_info[0].weight_mem.size);
-        for(int i = 0;i < model_core_num;i ++){
-            // printf("id:%d,allocation_info.weights_size=%d, allocation_info.internal_size=%d, allocation_info.weights_mem_size=%d, allocation_info.internal_mem_size=%d\n",
-            //     i,allocation_info[i].weight_mem.size, allocation_info[i].internal_mem.size, 
-            //     allocation_info[i].command_mem.size, allocation_info[i].kvcache_mem.size);
-            tot_memory += allocation_info[i].weight_mem.size;
-            tot_memory += allocation_info[i].internal_mem.size;
-            tot_memory += allocation_info[i].command_mem.size;
-            tot_memory += allocation_info[i].kvcache_mem.size;
-        
-        }
-        if(allocation_info) {
-            free(allocation_info);
-            allocation_info = NULL;
-        }
-    }
-    // printf("----------tot_memory:%ld\n",tot_memory);
     // get_tokenizer_and_embedding
     ret = get_tokenizer_and_embedding(args.tokenizer_path, &vocab_info, &tokenizer, &embedding_info, args.embedding_path, &emb_st);
     if (ret < 0) {
@@ -526,6 +468,7 @@ int main(int argc, char **argv) {
         first_token.tik();
         first_decode = true;
 
+
         ret = rknn3_session_run(session, llm_inputs, llm_n_inputs, &llm_infer_param);
         if (ret != RKNN3_SUCCESS) {
             printf("[rknn3_model_stress_test_error] rknn3_session_run failed, ret=%d\n", ret);
@@ -543,8 +486,8 @@ int main(int argc, char **argv) {
         cost_time.tok();
         // gettimeofday(&end, NULL);
 
-        total_time = cur_time.get_time();         // 当前单次耗时
-        infer_total_time = cost_time.get_time();  // 累计运行耗时
+        total_time = cur_time.get_time(); // 当前单次耗时
+        infer_total_time = cost_time.get_time(); // 累计运行耗时
 
         // 查询当前 state 以获取 decode_tokens
         ret = rknn3_session_query_state(session, &state);
@@ -562,16 +505,11 @@ int main(int argc, char **argv) {
 
         // 5. 迭代计数更新
         iter++;
-        acc_cnt++;
+        acc_cnt ++;
         acc_ms += total_time;
 
-        // if (acc_cnt >= 100) {
-        //     printf("[rknn3_model_stress_test_log] run_cnt diff: %d, run cost: %8.2f ms \n", acc_cnt, acc_ms);
-        //     acc_cnt = 0;
-        //     acc_ms = 0.0f;
-        // }
-        if (acc_ms >= print_interval) {
-            printf("run_cnt : %d, run cost: %8.2f ms \n", iter, infer_total_time);
+        if(acc_cnt >= 100) {
+            printf("run_cnt diff: %d, run cost: %8.2f ms \n",acc_cnt,acc_ms);
             acc_cnt = 0;
             acc_ms = 0.0f;
         }
@@ -581,7 +519,7 @@ int main(int argc, char **argv) {
             // 时间模式：达到指定小时数退出
             if (infer_total_time >= time_limit_ms) {
                 infer_total_time = infer_total_time;
-                printf("[rknn3_model_stress_test_log] Time limit reached. cost_time: %8.3f h\n", infer_total_time / 1000.f / 60.f / 60.f);
+                printf("Time limit reached. cost_time: %8.3f h\n", infer_total_time/1000.f/60.f/60.f);
                 break;
             }
         } else {
@@ -591,6 +529,7 @@ int main(int argc, char **argv) {
             }
         }
     }
+
 
     ret = rknn3_session_query_state(session, &state);
     // if (ret == RKNN3_SUCCESS) {
@@ -626,7 +565,7 @@ exit:
         delete tokenizer;
     }
 
-    if (ret == 0) {
+    if(ret == 0) {
         const char *last_slash = strrchr(args.model_path, '/');
         const char *filename;
 
@@ -660,22 +599,19 @@ exit:
         float final_total_time = (first_token.get_time() + decode_time_ms.get_time()) / 1000.0;
 
         printf("\n===== RKNN3_LLM_TEST Results Summary =====\n\n");
-        printf("Model: %s\n", model_name);
-        printf("DeviceID: %s\n", device_id_mac);
-        printf("LoadModelCost: %.3f ms\n", init_timer.get_time());
-        printf("ModelMemory: %ld MB\n", tot_memory / (1024 * 1024));
+        printf("Model: %s\n",model_name);
+        printf("DeviceID: %s\n",device_id_mac);
         printf("TTFT: %.3f ms\n", ttft_ms);
         printf("TPOT: %.3f ms\n", tpot);
         printf("Prefill: %.3f tokens/s\n", prefill_per_second);
         printf("TPS: %.3f tokens/s\n", tps);
-        printf("TotalTime: %.3f ms\n", infer_total_time);
-        printf("TotalRuns: %d\n", iter);
+        printf("TotalTime: %.3f ms\n",infer_total_time);
+        printf("TotalRuns: %d\n",iter);
         printf("\n=================================\n");
         printf("[rknn3_model_stress_test_done]\n");
     }
     fflush(stdout);
 
     free_cmdline_args(&args);
-
     return 0;
 }

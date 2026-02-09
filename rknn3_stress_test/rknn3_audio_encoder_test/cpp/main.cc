@@ -48,7 +48,6 @@ void print_usage(char *argv[]) {
     printf("  -al, --audio_loop      Audio loop count (default: 1)\n");
     printf("  -tl, --time_loop       Time loop in hours (overrides loop count)\n");
     printf("  -id, --device_id       Device ID (default: 0)\n");
-    printf("  -mm, --enable_memory_monitor  Enable memory monitoring (default: disabled)\n");
     printf("  -h,  --help            Display this help message\n");
     printf("\nExample:\n");
     printf("  %s -am audio.rknn -aw audio.weight -ac 0x7 -a test.wav -al 100\n", argv[0]);
@@ -78,7 +77,6 @@ int main(int argc, char **argv) {
     int audio_loop = args.cnt_loop;
     float time_loop = args.time_loop;
     uint32_t device_id = args.device_id;
-    bool enable_memory_monitor = args.enable_memory_monitor;
 
     // Validate required arguments for audio encoder using common function
     ret = validate_required_params(&args, PROGRAM_TYPE_AUDIO);
@@ -132,7 +130,7 @@ int main(int argc, char **argv) {
 
     // Run inference test
     printf("\n" RKNN3_AUDIO_ENC_LOG "Starting audio encoding stress test...\n");
-    ret = inference_audio_encoder_test(&rknn_app_ctx, &src_audio, model_name, audio_loop, time_loop, enable_memory_monitor);
+    ret = inference_audio_encoder_test(&rknn_app_ctx, &src_audio, model_name, audio_loop, time_loop);
     if (ret != 0) {
         printf(RKNN3_AUDIO_ENC_ERR "Inference test failed! ret=%d\n", ret);
         goto out;

@@ -12,7 +12,7 @@ if (ENABLE_ASAN)
     set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
     set (CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
 endif ()
-# add_definitions(-D_POSIX_C_SOURCE=199309L)
+add_definitions(-D_POSIX_C_SOURCE=199309L)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../rknn/rknn3-model-zoo/3rdparty/ 3rdparty.out)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../utils/ utils.out)
 
@@ -41,15 +41,12 @@ add_executable(${PROJECT_NAME}
     rknn3_ini.cc
     ${llm_file}
     ${vision_file}
-    ../../rknn3_test_monitor/MemoryMonitor.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../rknn3_test_monitor
     ${LIBRKNNAPI_INCLUDES}
     ${LIBTOKENIZER_INCLUDES}
-    ${RKNNSMI_INCLUDE_DIR}
 )
 
 target_link_directories(${PROJECT_NAME} PRIVATE
@@ -63,7 +60,6 @@ target_link_libraries(${PROJECT_NAME}
     cmdlineparser
     ${LIBRKNNAPI}
     ${LIBTOKENIZER}
-    ${RKNNSMI_LIB_DIR}/librknnsmi.a
     dl
 )
 

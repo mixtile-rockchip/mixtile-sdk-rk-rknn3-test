@@ -1,8 +1,8 @@
 #ifndef _RKNN_DEMO_TIMER_H_
 #define _RKNN_DEMO_TIMER_H_
 
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 199309L
+#ifndef __cplusplus
+#error "easy_timer.h is C++ only"
 #endif
 
 #include <time.h>
@@ -19,7 +19,7 @@ private:
     struct timespec start_time, stop_time;
     char indent[40] = "-- ";
 
-    double __get_us(struct timespec t)
+    double get_us_(struct timespec t)
     {
         return (static_cast<double>(t.tv_sec) * 1000000.0 + static_cast<double>(t.tv_nsec) / 1000.0);
     }

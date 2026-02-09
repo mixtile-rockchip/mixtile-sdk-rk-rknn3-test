@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
 
     // Run inference
     ret = inference_common_img(&rknn_app_ctx, &src_image, args.cnt_loop,
-                               args.time_loop, args.enable_memory_monitor);
+                               args.time_loop);
     if (ret != 0) {
         printf("[rknn3_model_stress_test_error] inference model fail! ret=%d\n", ret);
         goto cleanup;

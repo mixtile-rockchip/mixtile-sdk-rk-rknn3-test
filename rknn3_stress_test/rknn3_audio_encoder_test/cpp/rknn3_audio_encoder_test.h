@@ -50,6 +50,6 @@ int release_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx);
 int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
                                   audio_buffer_t* audio,
                                   const char* model_name,
-                                  int audio_loop, float time_loop, bool enable_memory_monitor);
+                                  int audio_loop, float time_loop);
 
 #endif //_RKNN3_AUDIO_ENCODER_TEST_H_

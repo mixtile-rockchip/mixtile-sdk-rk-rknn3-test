@@ -27,19 +27,6 @@
 extern "C" {
 #endif
 
-// /**
-//  * @brief Parameter type enumeration
-//  */
-// typedef enum {
-//     PARAM_TYPE_INT,
-//     PARAM_TYPE_UINT,
-//     PARAM_TYPE_HEX,
-//     PARAM_TYPE_FLOAT,
-//     PARAM_TYPE_STRING,
-//     PARAM_TYPE_BOOL
-// } param_type_t;
-
-
 /**
  * @brief Parameter definition structure
  */
@@ -47,7 +34,6 @@ typedef struct {
     int id;
     const char *short_name;
     const char *long_name;
-    // param_type_t type;
     const char *description;
     bool required;
     void *default_value;  // Pointer to default value
@@ -60,7 +46,6 @@ typedef struct {
     // Common parameters
     char *model_path;
     char *weight_path;
-    char *model_folder;
     uint32_t core_mask;
     uint32_t cnt_loop;
     float time_loop;
@@ -89,13 +74,8 @@ typedef struct {
     uint32_t llm_loop;
     char *prompt_ini_path;
 
-    // Audio specific
-    char *audio_path;
-
-    // Custom parameters (per-args instance, no global state)
-    param_def_t *custom_params;
-    char **custom_param_values;
-    int n_custom_params;
+    // User parameters storage
+    void *user_params;
 } cmdline_args_t;
 
 /**
@@ -138,20 +118,6 @@ void init_cmdline_args(cmdline_args_t *args);
 int register_custom_params(const param_def_t *params, int n_params, cmdline_args_t *args);
 
 /**
- * @brief Reset and free registered custom parameters and parsed values
- * @param args Pointer to cmdline_args_t structure
- */
-void reset_custom_params(cmdline_args_t *args);
-
-/**
- * @brief Get parsed custom parameter value by short/long name
- * @param args Pointer to cmdline_args_t structure
- * @param name Parameter name ("x", "-x", "name" or "--name")
- * @return Parsed value string, or NULL if not found/not set
- */
-const char *get_custom_param_value(const cmdline_args_t *args, const char *name);
-
-/**
  * @brief Program type enumeration
  */
 typedef enum {
@@ -167,7 +133,7 @@ typedef enum {
  * @param program_type Program type (CNN/LLM/VLM)
  * @return 0 if valid, -1 if missing required parameters
  */
-int validate_required_params(cmdline_args_t *args, program_type_t program_type);
+int validate_required_params(const cmdline_args_t *args, program_type_t program_type);
 
 /**
  * @brief Print configuration based on program type

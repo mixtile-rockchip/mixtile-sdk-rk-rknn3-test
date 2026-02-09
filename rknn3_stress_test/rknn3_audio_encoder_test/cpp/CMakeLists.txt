@@ -30,7 +30,6 @@ add_executable(${PROJECT_NAME}
     main.cc
     rknn3_audio_encoder_test.cc
     audio/rknn3_audio_encoder.cc
-    ../../rknn3_test_monitor/MemoryMonitor.cpp
 )
 
 target_link_directories(${PROJECT_NAME} PRIVATE
@@ -42,7 +41,6 @@ target_link_libraries(${PROJECT_NAME}
     fileutils
     cmdlineparser
     ${LIBRKNNAPI}
-    ${RKNNSMI_LIB_DIR}/librknnsmi.a
     dl
 )
 
@@ -62,7 +60,6 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/audio
     ${CMAKE_CURRENT_SOURCE_DIR}/llm
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../rknn3_test_monitor
     ${LIBRKNNAPI_INCLUDES}
     ${LIBTOKENIZER_INCLUDES}
     ${RKNNSMI_INCLUDE_DIR}

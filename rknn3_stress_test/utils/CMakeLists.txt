@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.15)
 
 project(rknn_model_zoo_utils)
 
+add_definitions(-D_POSIX_C_SOURCE=199309L)
+add_definitions(-D_GNU_SOURCE)
 add_library(fileutils STATIC
   file_utils.c
 )

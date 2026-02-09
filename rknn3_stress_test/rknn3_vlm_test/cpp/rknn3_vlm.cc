@@ -19,7 +19,6 @@
 #include "rknn3_vlm.h"
 #include "common.h"
 #include "image_utils.h"
-#include "MemoryMonitor.h"
 // #include "rknn_api.h"
 #include <math.h>
 
@@ -309,8 +308,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                                 rknn3_llm_multimodal_tensor tensor,
                                 int vision_loop,
                                 int llm_loop,
-                                float time_loop,
-                                bool enable_memory_monitor)
+                                float time_loop)
 {
     int ret;
 
@@ -320,28 +318,6 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
         return -1;
     }
 
-    // Variables for memory statistics (declared early to avoid issues)
-    MemoryStatistics mem_stats;
-    bool has_memory_stats = false;
-
-    // Initialize memory monitor only if enabled
-    MemoryMonitor* memory_monitor = nullptr;
-    if (enable_memory_monitor) {
-        memory_monitor = new MemoryMonitor(100000); // 100ms interval
-
-        // Set target device(s) to monitor (only monitor the device used for inference)
-        std::vector<uint16_t> target_devices = {(uint16_t)app_ctx->device_id};
-        memory_monitor->set_target_devices(target_devices);
-
-        if (!memory_monitor->initialize()) {
-            printf("[rknn3_model_stress_test_warning] Memory monitor initialization failed, memory monitoring will be disabled\n");
-            delete memory_monitor;
-            memory_monitor = nullptr;
-        } else {
-            memory_monitor->set_realtime_print(false);
-            printf("[rknn3_model_stress_test] Memory monitor initialized successfully\n");
-        }
-    }
     static float last_vision_cost = 0.f;
     static float last_ttft = 0.f;
     static float last_tps = 0.f;
@@ -350,96 +326,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
     int acc_cnt = 0;
     float acc_ms = 0.f;
     TIMER one_infer_time;
-    #if 0
-    // int32_t is_time_loop_mode = 0;
-    if(time_loop != 0) {
-        float time_loop_ms = (float)time_loop *60.*60.*1000.;
-        TIMER infer_cost_time;
-        infer_cost_time.tik();
-        int32_t model_loop = 0;
-        while(1) {
-            ret = inference_rknn3_vlm_vision(&(app_ctx->vision), img, img_embeds,1);
-            if (ret != 0)
-            {
-                printf("[rknn3_model_stress_test_error] inference rknn3_vlm vision model fail! ret=%d\n", ret);
-                return ret;
-            }
-
-            ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs,1);
-            if (ret != 0)
-            {
-                printf("[rknn3_model_stress_test_error] inference rknn3_vlm llm model fail! ret=%d\n", ret);
-                return ret;
-            };
-            infer_cost_time.tok();
-            float tmp_time = infer_cost_time.get_time();
-
-            model_loop ++;
-            if(tmp_time >time_loop_ms) {
-                break;
-            }
-            // printf("vlm run: %d/%d\n",model_loop);
-            infer_cost_time.print_time("cost_time");
-            if(last_vision_cost != 0.f && (model_loop > 10)) { // 为了防止不稳定，10次以后才开始性能测试
-                check_perfance(last_vision_cost,vision_cost.get_time());
-                check_perfance(last_ttft,llm_perfill.get_time());
-                check_perfance(last_tps,tps);
-                last_vision_cost = vision_cost.get_time();
-                last_ttft = llm_perfill.get_time();
-                last_tps = tps;
-            }
-        }
-    } else  {
-        // printf("--> inference rknn3_vlm vision model\n");
-        if(vision_loop == llm_loop) {
-            for(int i = 0;i < vision_loop;i ++) {
-                ret = inference_rknn3_vlm_vision(&(app_ctx->vision), img, img_embeds,1);
-                if (ret != 0)
-                {
-                    printf("[rknn3_model_stress_test_error] inference rknn3_vlm vision model fail! ret=%d\n", ret);
-                    return ret;
-                }
-
-                ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs,1);
-                if (ret != 0)
-                {
-                    printf("[rknn3_model_stress_test_error] inference rknn3_vlm llm model fail! ret=%d\n", ret);
-                    return ret;
-                };
-                printf("vlm run: %d/%d\n",i+1,vision_loop);
-                if(last_vision_cost != 0.f && (i > 10)) { // 为了防止不稳定，10次以后才开始性能测试
-                    check_perfance(last_vision_cost,vision_cost.get_time(), last_gen_tokens, gen_tokens);
-                    check_perfance(last_ttft,llm_perfill.get_time(), last_gen_tokens, gen_tokens);
-                    check_perfance(last_tps,tps, last_gen_tokens, gen_tokens);
-                    last_vision_cost = vision_cost.get_time();
-                    last_ttft = llm_perfill.get_time();
-                    last_tps = tps;
-                    last_gen_tokens = gen_tokens;
-                }
-
-            }
-        }else {
-            ret = inference_rknn3_vlm_vision(&(app_ctx->vision), img, img_embeds,vision_loop);
-            if (ret != 0)
-            {
-                printf("[rknn3_model_stress_test_error] inference rknn3_vlm vision model fail! ret=%d\n", ret);
-                return ret;
-            }
-
-            ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs,llm_loop);
-
-            if (ret != 0)
-            {
-                printf("[rknn3_model_stress_test_error] inference rknn3_vlm llm model fail! ret=%d\n", ret);
-                return ret;
-            }
-            // printf("vlm run %d end\n",i);
-        }
-
-
-    }
-    #else
-
+    
     bool is_time_mode = (time_loop != 0);
     bool is_equal_loop = (vision_loop == llm_loop);
     float time_limit_ms = is_time_mode ? (float)time_loop * 3600.0f * 1000.0f : 0;
@@ -459,10 +346,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
     } else {
         infer_cost_time.tik();
         int iter = 0;
-        // Start memory monitoring
-        if (memory_monitor) {
-            memory_monitor->start_monitoring();
-        }
+        
         while (true) {
 
             one_infer_time.tik();
@@ -492,12 +376,6 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
             infer_cost_time.tok();
             float current_total_ms = infer_cost_time.get_time();
             one_infer_time.tok();
-            // if (!is_time_mode) {
-            //     printf("\n vlm run: %d/%d\n", iter, vision_loop);
-            // }
-            // else {
-            //     infer_cost_time.print_time("cost_time:");
-            // }
             acc_cnt += 1;
             acc_ms += one_infer_time.get_time();
             if(acc_cnt >= 100) {
@@ -505,7 +383,6 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                 acc_cnt = 0;
                 acc_ms = 0.0f;
             }
-
 
             if (last_vision_cost != 0.f && iter > 10) {
                 check_perfance(last_vision_cost, vision_cost.get_time(), last_gen_tokens, gen_tokens);
@@ -525,19 +402,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                     break;
             }
         }
-        // Stop memory monitoring and get statistics (value copy)
-        if (memory_monitor) {
-            memory_monitor->stop_monitoring();
-            mem_stats = memory_monitor->get_statistics();
-            has_memory_stats = true;
-
-            // Cleanup memory monitor now (this will print library logs)
-            delete memory_monitor;
-            memory_monitor = nullptr;
-        }
     }
-
-    #endif
 
     if(ret == 0) {
         printf("[rknn3_model_stress_test_done] rknn3_vlm_demo run done\n");
@@ -547,24 +412,7 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
         printf("TTFT: %.3f ms\n", llm_perfill.get_time());
         printf("TPS: %.3f tokens/s\n", tps);
 
-        // Print memory statistics from the saved copy
-        if (has_memory_stats) {
-            if (mem_stats.is_valid && !mem_stats.devices.empty()) {
-                const DeviceMemoryStats& dev = mem_stats.devices[0];
-                printf("AvgMemoryUsage: %.2f MB (%.1f%%)\n",
-                       dev.avg_used_memory / 1024.0f / 1024.0f, dev.avg_usage_percent);
-                printf("AvgNpuUtilization: %u%%\n", dev.avg_npu_util);
-            } else {
-                printf("AvgMemoryUsage: \n");
-                printf("AvgNpuUtilization: error\n");
-            }
-        } else {
-            printf("AvgMemoryUsage: unavailable\n");
-            printf("AvgNpuUtilization: unavailable\n");
-        }
-
     }
-
 
     return ret;
 }

@@ -18,16 +18,18 @@
  */
 
 #include "cmdline_parser.h"
-
-#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
-#include <unistd.h>
+
+#define MAX_CUSTOM_PARAMS 32
+
+// Custom parameter storage
+static param_def_t g_custom_params[MAX_CUSTOM_PARAMS];
+static int g_n_custom_params = 0;
 
 // Static default values
-static const uint32_t DEFAULT_CORE_MASK = 0;
+static const uint32_t DEFAULT_CORE_MASK = 0x01;
 static const uint32_t DEFAULT_CNT_LOOP = 1;
 static const float DEFAULT_TIME_LOOP = 0.0f;
 static const uint32_t DEFAULT_DEVICE_ID = 0;
@@ -38,35 +40,8 @@ static const uint32_t DEFAULT_LLM_LOOP = 1;
 static const uint32_t DEFAULT_N_INPUT_TOKENS = 128;
 static const int32_t DEFAULT_MAX_NEW_TOKENS = 128;
 
-static int set_arg_string(char **dst, const char *value) {
-    char *new_value = strdup(value);
-    if (!new_value) {
-        printf("[cmdline_parser_error] strdup failed\n");
-        return -1;
-    }
-    free(*dst);
-    *dst = new_value;
-    return 0;
-}
-
-void reset_custom_params(cmdline_args_t *args) {
-    if (!args) return;
-
-    if (args->custom_param_values) {
-        for (int i = 0; i < args->n_custom_params; i++) {
-            free(args->custom_param_values[i]);
-            args->custom_param_values[i] = NULL;
-        }
-        free(args->custom_param_values);
-        args->custom_param_values = NULL;
-    }
-
-    free(args->custom_params);
-    args->custom_params = NULL;
-    args->n_custom_params = 0;
-}
-
-void init_cmdline_args(cmdline_args_t *args) {
+void init_cmdline_args(cmdline_args_t *args)
+{
     memset(args, 0, sizeof(cmdline_args_t));
 
     // Set default values
@@ -74,31 +49,22 @@ void init_cmdline_args(cmdline_args_t *args) {
     args->cnt_loop = DEFAULT_CNT_LOOP;
     args->time_loop = DEFAULT_TIME_LOOP;
     args->device_id = DEFAULT_DEVICE_ID;
-    // args->enable_memory_monitor = false;
     args->show_help = false;
     args->yuv_input = false;
 
-    args->max_context_len = 1024;
-    // args->core_mask = 0xff;
     args->n_input_tokens = DEFAULT_N_INPUT_TOKENS;
     args->max_new_tokens = DEFAULT_MAX_NEW_TOKENS;
     args->vision_core_mask = DEFAULT_VISION_CORE_MASK;
     args->llm_core_mask = DEFAULT_LLM_CORE_MASK;
     args->vision_loop = DEFAULT_VISION_LOOP;
     args->llm_loop = DEFAULT_LLM_LOOP;
-    args->model_folder = NULL;
-    // args->model_path = NULL;
-    // args->weight_path = NULL;
 }
 
-void free_cmdline_args(cmdline_args_t *args) {
+void free_cmdline_args(cmdline_args_t *args)
+{
     if (!args) return;
 
-#define FREE_IF_SET(ptr) \
-    if (ptr) {           \
-        free(ptr);       \
-        ptr = NULL;      \
-    }
+#define FREE_IF_SET(ptr) if (ptr) { free(ptr); ptr = NULL; }
 
     FREE_IF_SET(args->model_path);
     FREE_IF_SET(args->weight_path);
@@ -110,36 +76,33 @@ void free_cmdline_args(cmdline_args_t *args) {
     FREE_IF_SET(args->llm_model_path);
     FREE_IF_SET(args->llm_weight_path);
     FREE_IF_SET(args->prompt_ini_path);
-    FREE_IF_SET(args->model_folder);
-    FREE_IF_SET(args->audio_path);
-    reset_custom_params(args);
+    FREE_IF_SET(args->user_params);
 }
 
-int register_custom_params(const param_def_t *params, int n_params, cmdline_args_t *args) {
+int register_custom_params(const param_def_t *params, int n_params, cmdline_args_t *args)
+{
     if (!params || n_params <= 0 || !args) {
-        printf("[rknn3_model_stress_test_error] Invalid arguments for register_custom_params\n");
+        printf("[cmdline_parser_error] Invalid arguments for register_custom_params\n");
         return -1;
     }
 
-    reset_custom_params(args);
-
-    args->custom_params = (param_def_t *)calloc((size_t)n_params, sizeof(param_def_t));
-    args->custom_param_values = (char **)calloc((size_t)n_params, sizeof(char *));
-    if (!args->custom_params || !args->custom_param_values) {
-        printf("[rknn3_model_stress_test_error] Failed to allocate custom parameter storage\n");
-        reset_custom_params(args);
+    if (g_n_custom_params + n_params > MAX_CUSTOM_PARAMS) {
+        printf("[cmdline_parser_error] Too many custom parameters (max %d)\n", MAX_CUSTOM_PARAMS);
         return -1;
     }
 
     for (int i = 0; i < n_params; i++) {
-        args->custom_params[i] = params[i];
+        if (g_n_custom_params >= MAX_CUSTOM_PARAMS) {
+            break;
+        }
+        g_custom_params[g_n_custom_params++] = params[i];
     }
-    args->n_custom_params = n_params;
 
     return 0;
 }
 
-void print_usage(const char *argv0, int program_type, const param_def_t *custom_params, int n_custom_params) {
+void print_usage(const char *argv0, int program_type, const param_def_t *custom_params, int n_custom_params)
+{
     const char *program_name = "rknn3_test";
 
     if (argv0) {
@@ -155,7 +118,9 @@ void print_usage(const char *argv0, int program_type, const param_def_t *custom_
 
     // Common parameters
     printf("Common Parameters:\n");
-    printf("  -f, --model_folder           Model folder path\n");
+    printf("  -m, --model_path             Model path (.rknn)\n");
+    printf("  -w, --weight_path            Weight path (.weight)\n");
+    printf("  -c, --core_mask              Core mask (hex, e.g. 0x1)\n");
     printf("  -cl, --cnt_loop              Loop count (default: 1)\n");
     printf("  -tl, --time_loop             Time loop in hours (overrides cnt_loop)\n");
     printf("  -id, --device_id             Device ID (default: 0)\n");
@@ -164,9 +129,6 @@ void print_usage(const char *argv0, int program_type, const param_def_t *custom_
     // CNN/Vision specific
     if (program_type == PROGRAM_TYPE_CNN) {
         printf("\nCNN/Vision Specific Parameters:\n");
-        printf("  -m, --model_path             Model path (.rknn)\n");
-        printf("  -w, --weight_path            Weight path (.weight)\n");
-        printf("  -c, --core_mask              Core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
         printf("  -i, --image_path            Image path\n");
         printf("  --yuv                       Input image is YUV420SP NV12\n");
     }
@@ -174,9 +136,6 @@ void print_usage(const char *argv0, int program_type, const param_def_t *custom_
     // LLM specific
     if (program_type == PROGRAM_TYPE_LLM) {
         printf("\nLLM Specific Parameters:\n");
-        printf("  -m, --model_path             Model path (.rknn)\n");
-        printf("  -w, --weight_path            Weight path (.weight)\n");
-        printf("  -c, --core_mask              Core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
         printf("  -tk, --tokenizer             Tokenizer file path\n");
         printf("  -em, --embedding             Embedding file path\n");
         printf("  -ctx, --max_context_len      Max context length\n");
@@ -193,25 +152,13 @@ void print_usage(const char *argv0, int program_type, const param_def_t *custom_
         printf("  -lw, --llm_weight            LLM weight path\n");
         printf("  -tk, --tokenizer             Tokenizer file path\n");
         printf("  -em, --embedding             Embedding file path\n");
-        printf("  -vc, --vision_core_mask      Vision core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
-        printf("  -lc, --llm_core_mask         LLM core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
+        printf("  -vc, --vision_core_mask      Vision core mask (hex)\n");
+        printf("  -lc, --llm_core_mask         LLM core mask (hex)\n");
         printf("  -im, --image_path            Image path\n");
         printf("  -pi, --prompt_ini            Prompt INI file path\n");
         printf("  -vl, --vision_loop           Vision loop count (default: 1)\n");
         printf("  -ll, --llm_loop              LLM loop count (default: 1)\n");
     }
-    // Audio specific parameters
-
-    // Audio specific parameters
-    if (program_type == PROGRAM_TYPE_AUDIO) {
-        printf("\nAudio Encoder Specific Parameters:\n");
-        printf("  -m, --model_path             Model path (.rknn)\n");
-        printf("  -w, --weight_path            Weight path (.weight)\n");
-        printf("  -c, --core_mask              Core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
-        printf("  -a, --audio_path             Audio file path (.wav)\n");  // Reuse audio_path field for audio
-    }
-
-
 
     // Custom parameters
     if (custom_params && n_custom_params > 0) {
@@ -231,29 +178,25 @@ void print_usage(const char *argv0, int program_type, const param_def_t *custom_
     // Audio specific parameters
     if (program_type == PROGRAM_TYPE_AUDIO) {
         printf("\nAudio Encoder Specific Parameters:\n");
-        printf("  -m, --model_path             Model path (.rknn)\n");
-        printf("  -w, --weight_path            Weight path (.weight)\n");
-        printf("  -c, --core_mask              Core mask (hex, e.g. 0x1)\n");
-        printf("  -a, --audio_path             Audio file path (.wav)\n");  // Reuse audio_path field for audio
+        printf("  -i, --image_path             Audio file path (.wav)\n");  // Reuse image_path for audio
+        printf("  -al, --audio_loop            Audio loop count (default: 1)\n");
     }
 
     printf("\nExamples:\n");
     if (program_type == PROGRAM_TYPE_CNN) {
-        printf("  %s -f model_folder -c 0x01 -cl 100\n", program_name);
         printf("  %s -m model.rknn -w model.weight -c 0x1 -i image.jpg -cl 100\n", program_name);
     } else if (program_type == PROGRAM_TYPE_LLM) {
-        printf("  %s -f model_folder -c 0xff -cl 10\n", program_name);
         printf("  %s -m model.rknn -w model.weight -tk tokenizer.spm -em embedding.bin -c 0xff -cl 10\n", program_name);
     } else if (program_type == PROGRAM_TYPE_VLM) {
-        printf("   %s -f model_folder -vc 0xff -lc 0xff -vl 10 -ll 10\n", program_name);
         printf("  %s -vm vision.rknn -vw vision.weight -lm llm.rknn -lw llm.weight \\\n", program_name);
         printf("        -tk tokenizer.spm -em embedding.bin -vc 0x3 -lc 0xfc -i image.jpg\n");
     }
 }
 
 // Helper function to check if string matches parameter name
-static bool param_matches(const char *arg, const char *short_name, const char *long_name) {
-    if (!arg) return false;
+static bool param_matches(const char *arg, const char *short_name, const char *long_name)
+{
+    if (!arg || !short_name) return false;
 
     // Check short name (e.g., "-m")
     if (short_name && strlen(arg) >= 2 && arg[0] == '-' && arg[1] != '-') {
@@ -273,11 +216,13 @@ static bool param_matches(const char *arg, const char *short_name, const char *l
 }
 
 // Helper to parse hex value
-static uint32_t parse_hex(const char *str) {
+static uint32_t parse_hex(const char *str)
+{
     return (uint32_t)strtoul(str, NULL, 16);
 }
 
-int parse_cmdline_args(int argc, char **argv, cmdline_args_t *args) {
+int parse_cmdline_args(int argc, char **argv, cmdline_args_t *args)
+{
     if (!args) {
         printf("[cmdline_parser_error] args is NULL\n");
         return -1;
@@ -285,7 +230,7 @@ int parse_cmdline_args(int argc, char **argv, cmdline_args_t *args) {
 
     init_cmdline_args(args);
 
-    for (int i = 1; i < argc;) {
+    for (int i = 1; i < argc; ) {
         const char *arg = argv[i];
 
         // Help
@@ -311,8 +256,11 @@ int parse_cmdline_args(int argc, char **argv, cmdline_args_t *args) {
         const char *value = argv[i + 1];
 
         // Common parameters
-        if (param_matches(arg, "-f", "--model_folder")) {
-            if (set_arg_string(&args->model_folder, value) != 0) return -1;
+        if (param_matches(arg, "-m", "--model_path")) {
+            args->model_path = strdup(value);
+            i += 2;
+        } else if (param_matches(arg, "-w", "--weight_path")) {
+            args->weight_path = strdup(value);
             i += 2;
         } else if (param_matches(arg, "-c", "--core_mask")) {
             args->core_mask = parse_hex(value);
@@ -328,22 +276,16 @@ int parse_cmdline_args(int argc, char **argv, cmdline_args_t *args) {
             i += 2;
         }
         // CNN/Vision specific
-        else if (param_matches(arg, "-m", "--model_path")) {
-            if (set_arg_string(&args->model_path, value) != 0) return -1;
-            i += 2;
-        } else if (param_matches(arg, "-w", "--weight_path")) {
-            if (set_arg_string(&args->weight_path, value) != 0) return -1;
-            i += 2;
-        } else if (param_matches(arg, "-i", "--image_path")) {
-            if (set_arg_string(&args->image_path, value) != 0) return -1;
+        else if (param_matches(arg, "-i", "--image_path")) {
+            args->image_path = strdup(value);
             i += 2;
         }
         // LLM specific
         else if (param_matches(arg, "-tk", "--tokenizer")) {
-            if (set_arg_string(&args->tokenizer_path, value) != 0) return -1;
+            args->tokenizer_path = strdup(value);
             i += 2;
         } else if (param_matches(arg, "-em", "--embedding")) {
-            if (set_arg_string(&args->embedding_path, value) != 0) return -1;
+            args->embedding_path = strdup(value);
             i += 2;
         } else if (param_matches(arg, "-ctx", "--max_context_len")) {
             args->max_context_len = atoi(value);
@@ -357,16 +299,16 @@ int parse_cmdline_args(int argc, char **argv, cmdline_args_t *args) {
         }
         // VLM specific
         else if (param_matches(arg, "-vm", "--vision_model")) {
-            if (set_arg_string(&args->vision_model_path, value) != 0) return -1;
+            args->vision_model_path = strdup(value);
             i += 2;
         } else if (param_matches(arg, "-vw", "--vision_weight")) {
-            if (set_arg_string(&args->vision_weight_path, value) != 0) return -1;
+            args->vision_weight_path = strdup(value);
             i += 2;
         } else if (param_matches(arg, "-lm", "--llm_model")) {
-            if (set_arg_string(&args->llm_model_path, value) != 0) return -1;
+            args->llm_model_path = strdup(value);
             i += 2;
         } else if (param_matches(arg, "-lw", "--llm_weight")) {
-            if (set_arg_string(&args->llm_weight_path, value) != 0) return -1;
+            args->llm_weight_path = strdup(value);
             i += 2;
         } else if (param_matches(arg, "-vc", "--vision_core_mask")) {
             args->vision_core_mask = parse_hex(value);
@@ -381,23 +323,18 @@ int parse_cmdline_args(int argc, char **argv, cmdline_args_t *args) {
             args->llm_loop = (uint32_t)atoi(value);
             i += 2;
         } else if (param_matches(arg, "-im", "--image_path")) {
-            if (set_arg_string(&args->image_path, value) != 0) return -1;
+            args->image_path = strdup(value);
             i += 2;
         } else if (param_matches(arg, "-pi", "--prompt_ini")) {
-            if (set_arg_string(&args->prompt_ini_path, value) != 0) return -1;
-            i += 2;
-        }
-        // Audio specific
-        else if (param_matches(arg, "-a", "--audio_path")) {
-            if (set_arg_string(&args->audio_path, value) != 0) return -1;
+            args->prompt_ini_path = strdup(value);
             i += 2;
         }
         // Check custom parameters
         else {
             bool matched = false;
-            for (int j = 0; j < args->n_custom_params; j++) {
-                if (param_matches(arg, args->custom_params[j].short_name, args->custom_params[j].long_name)) {
-                    if (set_arg_string(&args->custom_param_values[j], value) != 0) return -1;
+            for (int j = 0; j < g_n_custom_params; j++) {
+                if (param_matches(arg, g_custom_params[j].short_name, g_custom_params[j].long_name)) {
+                    // Store in user_params area (simplified - can be extended)
                     matched = true;
                     i += 2;
                     break;
@@ -414,172 +351,58 @@ int parse_cmdline_args(int argc, char **argv, cmdline_args_t *args) {
     return 0;
 }
 
-static bool matches_name(const char *name, const char *short_name, const char *long_name) {
-    if (!name) return false;
-
-    if (short_name) {
-        if (strcmp(name, short_name) == 0) return true;
-        if (short_name[0] == '-' && strcmp(name, short_name + 1) == 0) return true;
-        if (short_name[0] != '-') {
-            char short_with_dash[64];
-            snprintf(short_with_dash, sizeof(short_with_dash), "-%s", short_name);
-            if (strcmp(name, short_with_dash) == 0) return true;
-        }
-    }
-
-    if (long_name) {
-        if (strcmp(name, long_name) == 0) return true;
-        if (long_name[0] == '-' && long_name[1] == '-' && strcmp(name, long_name + 2) == 0) return true;
-        if (!(long_name[0] == '-' && long_name[1] == '-')) {
-            char long_with_dash[128];
-            snprintf(long_with_dash, sizeof(long_with_dash), "--%s", long_name);
-            if (strcmp(name, long_with_dash) == 0) return true;
-        }
-    }
-    return false;
-}
-
-const char *get_custom_param_value(const cmdline_args_t *args, const char *name) {
-    if (!args || !name) return NULL;
-
-    for (int i = 0; i < args->n_custom_params; i++) {
-        if (matches_name(name, args->custom_params[i].short_name, args->custom_params[i].long_name)) {
-            return args->custom_param_values ? args->custom_param_values[i] : NULL;
-        }
-    }
-    return NULL;
-}
-
-static void populate_args_from_folder(cmdline_args_t *args, program_type_t program_type) {
-    if (!args || !args->model_folder) return;
-
-    DIR *dir = opendir(args->model_folder);
-    if (!dir) {
-        printf("[rknn3_model_stress_test_warnning] Could not open model_folder: %s\n", args->model_folder);
-        return;
-    }
-
-    struct dirent *ent;
-    while ((ent = readdir(dir)) != NULL) {
-        // printf("Scanning file: %s\n", ent->d_name);
-        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
-
-        char full_path[1024];
-        snprintf(full_path, sizeof(full_path), "%s/%s", args->model_folder, ent->d_name);
-
-#define SET_IF_NULL(target, val) \
-    if (!target) target = strdup(val)
-
-        if (program_type == PROGRAM_TYPE_CNN) {
-            if (strstr(ent->d_name, ".rknn")) {
-                SET_IF_NULL(args->model_path, full_path);
-            } else if (strstr(ent->d_name, ".weight")) {
-                SET_IF_NULL(args->weight_path, full_path);
-            }
-        } else if (program_type == PROGRAM_TYPE_LLM) {
-            if (strstr(ent->d_name, ".rknn")) {
-                SET_IF_NULL(args->model_path, full_path);
-            } else if (strstr(ent->d_name, ".weight")) {
-                SET_IF_NULL(args->weight_path, full_path);
-            } else if (strstr(ent->d_name, ".tokenizer.gguf")) {
-                SET_IF_NULL(args->tokenizer_path, full_path);
-            } else if (strstr(ent->d_name, ".embed.bin")) {
-                SET_IF_NULL(args->embedding_path, full_path);
-            }
-        } else if (program_type == PROGRAM_TYPE_VLM) {
-            if (strstr(ent->d_name, ".rknn")) {
-                printf("[rknn3_model_stress_test_info] ent->d_name: %s\n", ent->d_name);
-                if (strstr(ent->d_name, "vision") || strstr(ent->d_name, "encoder")) {
-                    SET_IF_NULL(args->vision_model_path, full_path);
-                    printf("[rknn3_model_stress_test_info] vision_model_path: %s\n", args->vision_model_path);
-                } else if (strstr(ent->d_name, "llm") || strstr(ent->d_name, "decoder")) {
-                    SET_IF_NULL(args->llm_model_path, full_path);
-                    printf("[rknn3_model_stress_test_info] llm_model_path: %s\n", args->llm_model_path);
-                }
-            } else if (strstr(ent->d_name, ".weight")) {
-                if (strstr(ent->d_name, "vision") || strstr(ent->d_name, "encoder")) {
-                    SET_IF_NULL(args->vision_weight_path, full_path);
-                    printf("[rknn3_model_stress_test_info] vision_weight_path: %s\n", args->vision_weight_path);
-                } else if (strstr(ent->d_name, "llm") || strstr(ent->d_name, "decoder")) {
-                    SET_IF_NULL(args->llm_weight_path, full_path);
-                    printf("[rknn3_model_stress_test_info] llm_weight_path: %s\n", args->llm_weight_path);
-                }
-            } else if (strstr(ent->d_name, "tokenizer")) {
-                SET_IF_NULL(args->tokenizer_path, full_path);
-            } else if (strstr(ent->d_name, "embed")) {
-                SET_IF_NULL(args->embedding_path, full_path);
-            } else if (strstr(ent->d_name, ".ini")) {
-                SET_IF_NULL(args->prompt_ini_path, full_path);
-            }
-        } else if (program_type == PROGRAM_TYPE_AUDIO) {
-            if (strstr(ent->d_name, ".rknn")) {
-                SET_IF_NULL(args->model_path, full_path);
-                // printf("[rknn3_model_stress_test_info] model_path: %s\n", args->model_path);
-            } else if (strstr(ent->d_name, ".weight")) {
-                SET_IF_NULL(args->weight_path, full_path);
-                // printf("[rknn3_model_stress_test_info] weight_path: %s\n", args->weight_path);
-            }
-        }
-#undef SET_IF_NULL
-    }
-    closedir(dir);
-}
-
-int validate_required_params(cmdline_args_t *args, program_type_t program_type) {
+int validate_required_params(const cmdline_args_t *args, program_type_t program_type)
+{
     if (!args) {
-        printf("[rknn3_model_stress_test_error] args is NULL\n");
+        printf("[cmdline_parser_error] args is NULL\n");
         return -1;
-    }
-
-    if (args->model_folder) {
-        populate_args_from_folder(args, program_type);
     }
 
     switch (program_type) {
         case PROGRAM_TYPE_CNN:
-            if (!args->model_folder && (!args->model_path || !args->weight_path)) {
+            if (!args->model_path || !args->weight_path) {
                 printf("[rknn3_model_stress_test_error] Missing required arguments: model_path or weight_path\n");
                 return -1;
             }
-            // if (!args->image_path) {
-            //     printf("[rknn3_model_stress_test_error] Missing required argument: image_path\n");
-            //     return -1;
-            // }
+            if (!args->image_path) {
+                printf("[rknn3_model_stress_test_error] Missing required argument: image_path\n");
+                return -1;
+            }
             break;
 
         case PROGRAM_TYPE_LLM:
-            if (!args->model_folder && (!args->model_path || !args->weight_path || !args->tokenizer_path || !args->embedding_path)) {
+            if (!args->model_path || !args->weight_path || !args->tokenizer_path || !args->embedding_path) {
                 printf("[rknn3_model_stress_test_error] Missing required arguments\n");
                 return -1;
             }
             break;
 
         case PROGRAM_TYPE_VLM:
-            if (!args->model_folder && (!args->vision_model_path || !args->vision_weight_path || !args->llm_model_path ||
-                                        !args->llm_weight_path || !args->tokenizer_path || !args->embedding_path)) {
+            if (!args->vision_model_path || !args->vision_weight_path || !args->llm_model_path ||
+                !args->llm_weight_path || !args->tokenizer_path || !args->embedding_path) {
                 printf("[rknn3_model_stress_test_error] Missing required arguments\n");
                 return -1;
             }
-            // if (!args->image_path) {
-            //     printf("[rknn3_model_stress_test_error] Missing required argument: image_path\n");
-            //     return -1;
-            // }
-            // if (args->vision_core_mask == 0 || args->llm_core_mask == 0) {
-            //     printf("[rknn3_model_stress_test_error] Invalid core_mask (must not be 0)\n");
-            //     return -1;
-            // }
-            // if (!args->prompt_ini_path) {
-            //     printf("[rknn3_model_stress_test_error] Missing required argument: prompt_ini_path\n");
-            //     return -1;
-            // }
+            if (!args->image_path) {
+                printf("[rknn3_model_stress_test_error] Missing required argument: image_path\n");
+                return -1;
+            }
+            if (args->vision_core_mask == 0 || args->llm_core_mask == 0) {
+                printf("[rknn3_model_stress_test_error] Invalid core_mask (must not be 0)\n");
+                return -1;
+            }
+            if (!args->prompt_ini_path) {
+                printf("[rknn3_model_stress_test_error] Missing required argument: prompt_ini_path\n");
+                return -1;
+            }
             break;
 
         case PROGRAM_TYPE_AUDIO:
-            if (!args->model_folder && (!args->model_path || !args->weight_path)) {
+            if (!args->model_path || !args->weight_path) {
                 printf("[rknn3_model_stress_test_error] Missing required arguments: model_path or weight_path\n");
                 return -1;
             }
-            if (!args->audio_path) {  // Using audio_path field for audio path
+            if (!args->image_path) {  // Using image_path field for audio path
                 printf("[rknn3_model_stress_test_error] Missing required argument: audio_path\n");
                 return -1;
             }
@@ -590,20 +413,20 @@ int validate_required_params(cmdline_args_t *args, program_type_t program_type) 
             break;
 
         default:
-            printf("[rknn3_model_stress_test_error] Unknown program type: %d\n", program_type);
+            printf("[cmdline_parser_error] Unknown program type: %d\n", program_type);
             return -1;
     }
 
     return 0;
 }
 
-void print_configuration(const cmdline_args_t *args, program_type_t program_type) {
+void print_configuration(const cmdline_args_t *args, program_type_t program_type)
+{
     if (!args) return;
 
     switch (program_type) {
         case PROGRAM_TYPE_CNN:
             printf("===== RKNN3_CNN_TEST Configuration =====\n");
-            printf("model_folder: %s\n", args->model_folder ? args->model_folder : "null");
             printf("model_path: %s\n", args->model_path ? args->model_path : "null");
             printf("weight_path: %s\n", args->weight_path ? args->weight_path : "null");
             printf("core_mask: 0x%x\n", args->core_mask);
@@ -655,8 +478,8 @@ void print_configuration(const cmdline_args_t *args, program_type_t program_type
             printf("audio_model: %s\n", args->model_path ? args->model_path : "null");
             printf("audio_weight: %s\n", args->weight_path ? args->weight_path : "null");
             printf("audio_core_mask: 0x%x\n", args->core_mask);
-            printf("audio_path: %s\n", args->audio_path ? args->audio_path : "null");  // Using audio_path field for audio
-            printf("audio_loop: %u\n", args->cnt_loop);                                // Using cnt_loop for audio_loop
+            printf("audio_path: %s\n", args->image_path ? args->image_path : "null");  // Using image_path for audio
+            printf("audio_loop: %u\n", args->cnt_loop);  // Using cnt_loop for audio_loop
             printf("device_id: %u\n", args->device_id);
             printf("time_loop: %.2f hours\n", args->time_loop);
             printf("=======================================\n\n");
@@ -664,7 +487,8 @@ void print_configuration(const cmdline_args_t *args, program_type_t program_type
     }
 }
 
-void handle_time_loop_override(cmdline_args_t *args, program_type_t program_type) {
+void handle_time_loop_override(cmdline_args_t *args, program_type_t program_type)
+{
     if (!args) return;
 
     if (args->time_loop != 0.0f) {

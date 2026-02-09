@@ -34,19 +34,12 @@ add_executable(${PROJECT_NAME}
     main.cpp
     rknn3_cnn_test.cpp
     cnpy.cpp
-    ../../rknn3_test_monitor/MemoryMonitor.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../rknn3_test_monitor
     ${LIBRKNNAPI_INCLUDES}
     ${LIBTOKENIZER_INCLUDES}
-    ${RKNNSMI_INCLUDE_DIR}
-)
-
-target_link_directories(${PROJECT_NAME} PRIVATE
-    ${RKNNSMI_LIB_DIR}
 )
 
 # Link with static librknnsmi.a (which includes chips_connect_rc_static and libpci)
@@ -56,7 +49,6 @@ target_link_libraries(${PROJECT_NAME}
     cmdlineparser
     ${LIBRKNNAPI}
     ${LIBTOKENIZER}
-    ${RKNNSMI_LIB_DIR}/librknnsmi.a
     dl
 )
 
