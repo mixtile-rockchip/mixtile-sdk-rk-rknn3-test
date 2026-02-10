@@ -95,6 +95,45 @@ int init_common_img(rknn_common_img_ctx *vision_ctx, const char *model_path, con
         return ret;
     }
 
+    // Query model required core number
+    uint32_t model_core_num = 0;
+    ret = rknn3_query(ctx, RKNN3_QUERY_CORE_NUMBER, &model_core_num, sizeof(model_core_num));
+    if (ret < 0) {
+        printf("[rknn3_model_stress_test_error] rknn3_query core number failed! ret=%d\n", ret);
+        rknn3_destroy(ctx);
+        return -1;
+    }
+
+    if (core_mask == 0) {
+        if (model_core_num > 32U) {
+            printf("[rknn3_model_stress_test_error] model_core_num=%u exceeds max supported 32\n", model_core_num);
+            rknn3_destroy(ctx);
+            return -1;
+        }
+        // Auto-generate core_mask: starting from bit 0 for each core_number cores
+        for (uint32_t i = 0; i < model_core_num; i++) {
+            core_mask |= (1U << i);
+        }
+        printf("Auto-generated core_mask: 0x%x for %u cores\n", core_mask, model_core_num);
+    } else {
+        uint32_t core_num_from_mask = 0;
+        for (int i = 0; i < 32; i++) {
+            if (core_mask & (1U << i)) core_num_from_mask++;
+        }
+        if (core_num_from_mask != model_core_num) {
+            printf("[rknn3_model_stress_test_error] core_mask 0x%x has %u cores, but model requires %u cores\n",
+                   core_mask, core_num_from_mask, model_core_num);
+            rknn3_destroy(ctx);
+            return -1;
+        }
+    }
+    printf("[rknn3_stress_test_log] Model requires %u NPU cores\n", model_core_num);
+    printf("[rknn3_stress_test_log] User specified core_mask: 0x%x\n", core_mask);
+    // set config
+    memset(&config, 0, sizeof(config));
+    config.run_core_mask = core_mask;
+
+
     // Init RKNN Model
     ret = rknn3_model_init(ctx, &config);
     if (ret < 0) {

@@ -259,24 +259,6 @@ int main(int argc, char **argv) {
     embedding_info.vocab_size = vocab_info.vocab_size;
     embedding_info.embedding_dim = (emb_st.st_size / vocab_info.vocab_size) / sizeof(float16);
 
-#if 0
-    // Set LLM parameters
-    params.logits_name               = "logits";
-    params.max_context_len           = MAX_CONTEXT_LEN;
-    // params.max_new_tokens            = MAX_NEW_TOKENS;
-    params.sampling_param            = SAMPLE_PARAMS;
-    params.vocab_info.vocab_size     = vocab_info.vocab_size;
-    params.vocab_info.special_eos_id = vocab_info.special_eos_id;
-    params.vocab_info.linefeed_id    = vocab_info.linefeed_id;
-
-    // LLM Callback
-    callback.result_callback    = result_callback;
-    callback.result_userdata    = tokenizer;
-    callback.tokenizer_callback = tokenizer_callback;
-    callback.tokenizer_userdata = tokenizer;
-    callback.embed_callback     = embed_callback;
-    callback.embed_userdata     = &embedding_info;
-#else
     // Set LLM parameters
     params.logits_name = (char*)"logits";
     params.max_context_len = MAX_CONTEXT_LEN;
@@ -296,7 +278,6 @@ int main(int argc, char **argv) {
     callback.embed_callback = embed_callback;
     callback.embed_userdata = &embedding_info;
 
-#endif
     strncpy(rknn_app_ctx.llm.system_prompt, system_prompt, strlen(system_prompt) - 1);
     strncpy(rknn_app_ctx.llm.prefix_prompt, prompt_prefix, strlen(prompt_prefix) - 1);
     strncpy(rknn_app_ctx.llm.postfix_prompt, prompt_postfix, strlen(prompt_postfix) - 1);

@@ -33,12 +33,12 @@ static param_def_t g_custom_params[MAX_CUSTOM_PARAMS];
 static int g_n_custom_params = 0;
 
 // Static default values
-static const uint32_t DEFAULT_CORE_MASK = 0x01;
+static const uint32_t DEFAULT_CORE_MASK = 0;
 static const uint32_t DEFAULT_CNT_LOOP = 1;
 static const float DEFAULT_TIME_LOOP = 0.0f;
 static const uint32_t DEFAULT_DEVICE_ID = 0;
-static const uint32_t DEFAULT_VISION_CORE_MASK = 0xff;
-static const uint32_t DEFAULT_LLM_CORE_MASK = 0xff;
+static const uint32_t DEFAULT_VISION_CORE_MASK = 0;
+static const uint32_t DEFAULT_LLM_CORE_MASK = 0;
 static const uint32_t DEFAULT_VISION_LOOP = 1;
 static const uint32_t DEFAULT_LLM_LOOP = 1;
 static const uint32_t DEFAULT_N_INPUT_TOKENS = 128;
@@ -139,7 +139,7 @@ void print_usage(const char *argv0, int program_type, const param_def_t *custom_
         printf("\nCNN/Vision Specific Parameters:\n");
         printf("  -m, --model_path             Model path (.rknn)\n");
         printf("  -w, --weight_path            Weight path (.weight)\n");
-        printf("  -c, --core_mask              Core mask (hex, e.g. 0x1)\n");
+        printf("  -c, --core_mask              Core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
         printf("  -i, --image_path            Image path\n");
         printf("  --yuv                       Input image is YUV420SP NV12\n");
     }
@@ -149,7 +149,7 @@ void print_usage(const char *argv0, int program_type, const param_def_t *custom_
         printf("\nLLM Specific Parameters:\n");
         printf("  -m, --model_path             Model path (.rknn)\n");
         printf("  -w, --weight_path            Weight path (.weight)\n");
-        printf("  -c, --core_mask              Core mask (hex, e.g. 0x1)\n");
+        printf("  -c, --core_mask              Core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
         printf("  -tk, --tokenizer             Tokenizer file path\n");
         printf("  -em, --embedding             Embedding file path\n");
         printf("  -ctx, --max_context_len      Max context length\n");
@@ -166,8 +166,8 @@ void print_usage(const char *argv0, int program_type, const param_def_t *custom_
         printf("  -lw, --llm_weight            LLM weight path\n");
         printf("  -tk, --tokenizer             Tokenizer file path\n");
         printf("  -em, --embedding             Embedding file path\n");
-        printf("  -vc, --vision_core_mask      Vision core mask (hex)\n");
-        printf("  -lc, --llm_core_mask         LLM core mask (hex)\n");
+        printf("  -vc, --vision_core_mask      Vision core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
+        printf("  -lc, --llm_core_mask         LLM core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
         printf("  -im, --image_path            Image path\n");
         printf("  -pi, --prompt_ini            Prompt INI file path\n");
         printf("  -vl, --vision_loop           Vision loop count (default: 1)\n");
@@ -177,7 +177,7 @@ void print_usage(const char *argv0, int program_type, const param_def_t *custom_
         printf("\nAudio Encoder Specific Parameters:\n");
         printf("  -m, --model_path             Model path (.rknn)\n");
         printf("  -w, --weight_path            Weight path (.weight)\n");
-        printf("  -c, --core_mask              Core mask (hex, e.g. 0x1)\n");
+        printf("  -c, --core_mask              Core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
         printf("  -a, --audio_path             Audio file path (.wav)\n");  // Reuse audio_path field for audio
     }
     // Custom parameters
@@ -492,10 +492,6 @@ int validate_required_params(const cmdline_args_t *args, program_type_t program_
             }
             if (!args->image_path) {
                 printf("[rknn3_model_stress_test_error] Missing required argument: image_path\n");
-                return -1;
-            }
-            if (args->vision_core_mask == 0 || args->llm_core_mask == 0) {
-                printf("[rknn3_model_stress_test_error] Invalid core_mask (must not be 0)\n");
                 return -1;
             }
             if (!args->prompt_ini_path) {

@@ -19,7 +19,6 @@
 #include "rknn3_vlm.h"
 #include "common.h"
 #include "image_utils.h"
-// #include "rknn_api.h"
 #include <math.h>
 
 // External variables from main.cc
@@ -41,24 +40,6 @@ int init_internal_share(rknn_app_context_t* app_ctx, uint32_t core_mask_vision, 
         printf("rknn3_query failed! ret=%d\n", ret);
         return ret;
     }
-
-    uint32_t core_num_vision_ = 0;
-    uint32_t core_num_llm_ = 0;
-    for (int i = 0; i < 32; i++) {
-        if (core_mask_vision & (1 << i))    core_num_vision_++;
-    }
-    for (int i = 0; i < 32; i++) {
-        if (core_mask_llm & (1 << i))    core_num_llm_++;
-    }
-    if (core_num_vision_ != core_num_vision) {
-        printf("the core_mask_vision = %x is not match the core_num_vision = %d!\n", core_mask_vision, core_num_vision);
-        return -1;
-    }
-    if (core_num_llm_ != core_num_llm) {
-        printf("the core_mask_llm = %x is not match the core_num_llm = %d!\n", core_mask_llm, core_num_llm);
-        return -1;
-    }
-
     rknn3_core_mem_size* core_mem_sizes_vision = (rknn3_core_mem_size*)malloc(sizeof(rknn3_core_mem_size) * core_num_vision);
     if (!core_mem_sizes_vision) {
         printf("Failed to allocate memory for core_mem_sizes_vision\n");
@@ -186,6 +167,9 @@ int init_rknn3_vlm_model(rknn_app_context_t* app_ctx,
                         uint32_t llm_core_mask)
 {
     int ret = 0;
+    if (vision_core_mask == 0 || llm_core_mask == 0) {
+        printf("[rknn3_stress_test_log] core_mask=0, auto-generate mask from model core number\n");
+    }
 
     printf("--> init rknn3_vlm vision model\n");
     ret = init_rknn3_vlm_vision(&(app_ctx->vision), vision_model_path, vision_weight_path, vision_core_mask);
@@ -212,13 +196,13 @@ int init_rknn3_vlm_model(rknn_app_context_t* app_ctx,
             deepstack_attrs[i].index = 2 + i; //deepstack的index为2、3、 4,可以通过rknn3_query查询所有input_attrs定位到deepstack的index
             ret = rknn3_query(app_ctx->llm.rknn_ctx, RKNN3_QUERY_INPUT_ATTR, &(deepstack_attrs[i]), sizeof(rknn3_tensor_attr));
             if (ret < 0) {
-            printf("rknn_query fail! ret=%d\n", ret);
+            printf("[rknn3_model_stress_test_error] rknn_query fail! ret=%d\n", ret);
             return -1;
             }
 
             app_ctx->llm.deepstack_tensor[i].mem = rknn3_create_mem(app_ctx->llm.rknn_ctx, deepstack_aligned_size, deepstack_attrs[i].core_id, RKNN3_FLAG_MEMORY_CACHEABLE);
             if (!app_ctx->llm.deepstack_tensor[i].mem) {
-            printf("fail to create aux_input_tensor.mem!\n");
+            printf("[rknn3_model_stress_test_error] fail to create aux_input_tensor.mem!\n");
             return -1;
             }
         }
@@ -228,7 +212,7 @@ int init_rknn3_vlm_model(rknn_app_context_t* app_ctx,
     ret = init_internal_share(app_ctx, vision_core_mask, llm_core_mask);
     if (ret < 0)
     {
-        printf("fastvlm llm/vision internal memeory share fail! ret=%d\n", ret);
+        printf("[rknn3_model_stress_test_error] llm/vision internal memeory share fail! ret=%d\n", ret);
         return ret;
     }
 
@@ -336,7 +320,6 @@ int inference_rknn3_vlm_model(rknn_app_context_t* app_ctx,
     if (!is_time_mode && !is_equal_loop) {
         ret = inference_rknn3_vlm_vision(&(app_ctx->vision), img, vision_loop);
         if (ret == 0) {
-
             ret = inference_rknn3_vlm_llm(&(app_ctx->llm), tensor, n_inputs, llm_loop);
         }
         if (ret != 0) {
