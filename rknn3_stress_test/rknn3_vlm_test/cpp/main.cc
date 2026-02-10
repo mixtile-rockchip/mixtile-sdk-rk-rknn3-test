@@ -157,6 +157,10 @@ int main(int argc, char **argv) {
         return args.show_help ? 0 : -1;
     }
 
+    if (args.model_folder) {
+        (void)populate_args_from_model_folder(&args, PROGRAM_TYPE_VLM);
+    }
+
     // Validate required arguments for VLM using common function
     ret = validate_required_params(&args, PROGRAM_TYPE_VLM);
     if (ret != 0) {
@@ -380,8 +384,6 @@ int main(int argc, char **argv) {
         printf("\n=================================\n");
         printf("[rknn3_model_stress_test_done]\n");
     }
-
-
 
 out:
     ret = release_rknn3_vlm_model(&rknn_app_ctx);

@@ -307,6 +307,10 @@ int main(int argc, char **argv) {
         return args.show_help ? 0 : -1;
     }
 
+    if (args.model_folder) {
+        (void)populate_args_from_model_folder(&args, PROGRAM_TYPE_LLM);
+    }
+
     // Validate required arguments using common function
     ret = validate_required_params(&args, PROGRAM_TYPE_LLM);
     if (ret != 0) {

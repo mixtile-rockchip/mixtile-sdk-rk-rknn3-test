@@ -68,15 +68,9 @@ int main(int argc, char **argv) {
         return args.show_help ? 0 : -1;
     }
 
-    // Define program type for audio (using custom approach since not directly supported)
-    // Map audio-specific parameters from common args
-    char *audio_model_path = args.model_path;
-    char *audio_weight_path = args.weight_path;
-    uint32_t audio_core_mask = args.core_mask;
-    char *audio_path = args.image_path;  // Reuse image_path for audio_path
-    int audio_loop = args.cnt_loop;
-    float time_loop = args.time_loop;
-    uint32_t device_id = args.device_id;
+    if (args.model_folder) {
+        (void)populate_args_from_model_folder(&args, PROGRAM_TYPE_AUDIO);
+    }
 
     // Validate required arguments for audio encoder using common function
     ret = validate_required_params(&args, PROGRAM_TYPE_AUDIO);
@@ -91,6 +85,16 @@ int main(int argc, char **argv) {
 
     // Print configuration using common function
     print_configuration(&args, PROGRAM_TYPE_AUDIO);
+
+    // Define program type for audio (using custom approach since not directly supported)
+    // Map audio-specific parameters from common args
+    char *audio_model_path = args.model_path;
+    char *audio_weight_path = args.weight_path;
+    uint32_t audio_core_mask = args.core_mask;
+    char *audio_path = args.audio_path;  // Reuse audio_path field for audio_path
+    int audio_loop = args.cnt_loop;
+    float time_loop = args.time_loop;
+    uint32_t device_id = args.device_id;
 
     // RKNN Context
     rknn_audio_encoder_context_t rknn_app_ctx;

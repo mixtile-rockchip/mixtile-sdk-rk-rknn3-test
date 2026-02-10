@@ -43,6 +43,10 @@ int main(int argc, char **argv) {
         return args.show_help ? 0 : -1;
     }
 
+    if (args.model_folder) {
+        (void)populate_args_from_model_folder(&args, PROGRAM_TYPE_CNN);
+    }
+
     // Validate required arguments using common function
     ret = validate_required_params(&args, PROGRAM_TYPE_CNN);
     if (ret != 0) {
@@ -68,6 +72,7 @@ int main(int argc, char **argv) {
     // Set image format based on yuv flag
     src_image.format = args.yuv_input ? IMAGE_FORMAT_YUV420SP_NV12 : IMAGE_FORMAT_RGB888;
 
+    
     // Read Image
     ret = read_image(args.image_path, &src_image);
     if (ret != 0) {

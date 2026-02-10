@@ -46,6 +46,7 @@ typedef struct {
     // Common parameters
     char *model_path;
     char *weight_path;
+    char *model_folder;
     uint32_t core_mask;
     uint32_t cnt_loop;
     float time_loop;
@@ -73,6 +74,9 @@ typedef struct {
     uint32_t vision_loop;
     uint32_t llm_loop;
     char *prompt_ini_path;
+
+    // Audio specific
+    char *audio_path;
 
     // User parameters storage
     void *user_params;
@@ -126,6 +130,14 @@ typedef enum {
     PROGRAM_TYPE_VLM = 2,
     PROGRAM_TYPE_AUDIO = 3
 } program_type_t;
+
+/**
+ * @brief Populate model/tokenizer paths from model_folder
+ * @param args Pointer to cmdline_args_t structure
+ * @param program_type Program type (CNN/LLM/VLM/AUDIO)
+ * @return 0 on success, -1 on error
+ */
+int populate_args_from_model_folder(cmdline_args_t *args, program_type_t program_type);
 
 /**
  * @brief Validate required parameters based on program type
