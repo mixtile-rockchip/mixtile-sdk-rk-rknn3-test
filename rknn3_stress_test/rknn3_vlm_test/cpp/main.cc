@@ -30,14 +30,8 @@
 #include "rknn3_vlm.h"
 #include "cmdline_parser.h"
 
-TIMER vision_cost;
-TIMER llm_perfill, llm_decode;
-int32_t gen_tokens = 0;
+rknn3_vlm_perf_t g_vlm_perf;
 int32_t first_tokens = 1;
-float tps = 0.f;
-TIMER vl_cost;
-TIMER infer_cost_time;
-int32_t infer_loop_cnt;
 int is_print_result = 1;
 struct embedding_info {
     int fd;
@@ -69,9 +63,9 @@ int result_callback(void *userdata, RKLLMResult *result, LLMCallState state) {
         printf("\n\nError occurred during inference\n");
         return 0;
     } else if (state == RKLLM_RUN_FINISH) {
-        llm_decode.tok();
+        g_vlm_perf.llm_decode.tok();
         first_tokens = 1;
-        tps = gen_tokens / llm_decode.get_time() * 1000.f;
+        g_vlm_perf.tps = g_vlm_perf.gen_tokens / g_vlm_perf.llm_decode.get_time() * 1000.f;
 
         // printf("\n\n--------------------Finished-------------------- \n");
         return 0;
@@ -87,15 +81,15 @@ int result_callback(void *userdata, RKLLMResult *result, LLMCallState state) {
     } else if (state == RKLLM_RUN_NORMAL) {
 
         if (first_tokens) {
-            llm_decode.tik();
-            llm_perfill.tok();
-            vl_cost.tok();
+            g_vlm_perf.llm_decode.tik();
+            g_vlm_perf.llm_perfill.tok();
+            g_vlm_perf.vl_cost.tok();
             first_tokens = 0;
-            gen_tokens = 1;
+            g_vlm_perf.gen_tokens = 1;
 
         }
         else {
-            gen_tokens += 1;
+            g_vlm_perf.gen_tokens += 1;
         }
         if (is_print_result) {
             if (result->num_tokens > 1) {
@@ -192,6 +186,9 @@ int main(int argc, char **argv) {
 
     is_print_result = print_result;
 
+    //init g_vlm_perf
+    g_vlm_perf.tot_memory = 0;
+    
     // RKNN Context
     rknn_app_context_t rknn_app_ctx;
     memset(&rknn_app_ctx, 0, sizeof(rknn_app_context_t));
@@ -330,8 +327,8 @@ int main(int argc, char **argv) {
     tensor.image.image_end = ini_get("tensor", "img_end", "");
     tensor.image.image_content = ini_get("tensor", "img_content", "");
 
-    // llm_perfill.tik();
-    vl_cost.tik();
+    // g_vlm_perf.llm_perfill.tik();
+    g_vlm_perf.vl_cost.tik();
     ret = inference_rknn3_vlm_model(&rknn_app_ctx, &src_image, tensor, args.vision_loop, args.llm_loop, args.time_loop);
     if (ret != 0) {
         printf("[rknn3_model_stress_test_error] inference rknn3_vlm model fail! ret=%d\n", ret);
@@ -360,8 +357,15 @@ int main(int argc, char **argv) {
         printf("\n===== RKNN3_VLM_TEST Results Summary =====\n\n");
         printf("Model: %s\n",model_name);
         printf("DeviceID: %s\n",rknn_app_ctx.llm.device_mac);
-        printf("TotalTime: %.3f ms\n",infer_cost_time.get_time());
-        printf("TotalRuns: %d\n",infer_loop_cnt);
+        printf("LoadVisionModelTime: %.3f ms\n", g_vlm_perf.load_vision_model.get_time());
+        printf("LoadLLMModelTime: %.3f ms\n", g_vlm_perf.load_llm_model.get_time());
+        printf("ModelMemory: %.3f MB\n", (float)g_vlm_perf.tot_memory / (1024. * 1024.));
+        printf("Vision: %.f ms\n", g_vlm_perf.vision_cost.get_time());
+        printf("GenLen: %d tokens\n", g_vlm_perf.gen_tokens);
+        printf("TTFT: %.3f ms\n", g_vlm_perf.llm_perfill.get_time());
+        printf("TPS: %.3f tokens/s\n", g_vlm_perf.tps);
+        printf("TotalTime: %.3f ms\n",g_vlm_perf.infer_cost_time.get_time());
+        printf("TotalRuns: %d\n",g_vlm_perf.infer_loop_cnt);
         printf("\n=================================\n");
         printf("[rknn3_model_stress_test_done]\n");
     }

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "rknn3_vlm_vision.h"
+#include "rknn3_vlm.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -438,7 +439,7 @@ int inference_rknn3_vlm_vision(rknn3_vlm_vision_context *vision_ctx, image_buffe
     // printf("rknn_run\n");
 
     for (int i = 0; i < loop; i++) {
-        vision_cost.tik();
+        g_vlm_perf.vision_cost.tik();
         // printf("vision_ctx->io_num.n_input:%d\n",vision_ctx->io_num.n_input);
         sync_in_time.tik();
         for (int j = 0; j < vision_ctx->io_num.n_input; j++) {
@@ -465,8 +466,8 @@ int inference_rknn3_vlm_vision(rknn3_vlm_vision_context *vision_ctx, image_buffe
             }
         }
         sync_out_time.tok();
-        vision_cost.tok();
-        tot_cost += vision_cost.get_time();
+        g_vlm_perf.vision_cost.tok();
+        tot_cost += g_vlm_perf.vision_cost.get_time();
         if (loop != 1) {
             if (i % 100 == 0) {
                 printf("run: %d, cost: %f,sync_in: %f,sync_out: %f\n", i + 1, tot_cost, sync_in_time.get_time(), sync_out_time.get_time());

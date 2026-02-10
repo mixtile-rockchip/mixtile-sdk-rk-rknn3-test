@@ -28,8 +28,8 @@
 #include "float16.h"
 #include "image_utils.h"
 
-static void dump_tensor_attr(rknn3_tensor_attr* attrs)
-{
+extern rknn3_cnn_perf_t g_perf;
+static void dump_tensor_attr(rknn3_tensor_attr *attrs) {
     std::string shape_str = "";
     for (int j = 0; j < attrs->n_dims; j++) {
         shape_str += std::to_string(attrs->shape[j]);
@@ -132,7 +132,6 @@ int init_common_img(rknn_common_img_ctx *vision_ctx, const char *model_path, con
     // set config
     memset(&config, 0, sizeof(config));
     config.run_core_mask = core_mask;
-
 
     // Init RKNN Model
     ret = rknn3_model_init(ctx, &config);
@@ -454,14 +453,14 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
     int ret;
     image_buffer_t dst_img;
     memset(&dst_img, 0, sizeof(image_buffer_t));
-
+    int32_t warmup_cnt = 5;
     image_buffer_t yuv_img;
     memset(&yuv_img, 0, sizeof(image_buffer_t));
 
     int infer_cnt = 0;
     TIMER tot_cost;
     static float last_print_time = 0.0f;
-    float print_interval = 1 * 1000 * 60;  // 1ms
+    float print_interval = 1 * 1000 * 40;  // 40s
     float time_loop_ms = (float)time_loop * 60.f * 60.f * 1000.f;
 
     // printf("--------------img->format=%d\n",img->format);
@@ -517,6 +516,39 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         // printf("\n");
     }
 
+    if (warmup_cnt) {
+        if (img->format == IMAGE_FORMAT_RGB888) {
+            // --- Sync Input ---
+            for (int i = 0; i < vision_ctx->io_num.n_input; i++) {
+                ret = rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->inputs[i].mem, RKNN3_MEMORY_SYNC_TO_DEVICE);
+                if (ret != RKNN3_SUCCESS) {
+                    printf("rknn3_mem_sync input[%d] failed! ret=%d\n", i, ret);
+                    goto out;
+                }
+            }
+        } else if (img->format == IMAGE_FORMAT_YUV420SP_NV12 || img->format == IMAGE_FORMAT_YUV420SP_NV21) {
+            // --- Sync Input ---
+            ret = rknn3_im_cvt_color(vision_ctx->rknn_ctx, &vision_ctx->src_mem, &vision_ctx->dst_mem);
+            if (ret < 0) {
+                printf("rknn3_im_cvt_color failed! ret=%d\n", ret);
+                goto out;
+            }
+        }
+
+        // --- Run Model ---
+        ret = rknn3_run(vision_ctx->rknn_ctx, vision_ctx->inputs, vision_ctx->io_num.n_input, vision_ctx->outputs, vision_ctx->io_num.n_output);
+        if (ret < 0) {
+            printf("[rknn3_model_stress_test_error] rknn_run fail! ret=%d\n", ret);
+            goto out;
+        }
+
+        // --- Sync Output ---
+        for (int i = 0; i < vision_ctx->io_num.n_output; i++) {
+            rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
+        }
+        warmup_cnt --;
+    }
+    printf("[rknn3_model_stress_test_log] warm up done.start stress test...\n");
     tot_cost.tik();
     while (1) {
         if (time_loop == 0.f && infer_cnt >= cnt_loop) {
@@ -557,7 +589,8 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         float tmp_time = tot_cost.get_time();
 
         if (tmp_time - last_print_time >= print_interval) {
-            tot_cost.print_time("rknn3_cnn_demo running cost: ");
+            // tot_cost.print_time("rknn3_cnn_demo running cost: ");
+            printf("run_cnt : %d, run cost: %8.2f ms \n", infer_cnt, tot_cost.get_time());
             last_print_time = tmp_time;
         }
         if (time_loop != 0.f) {
@@ -574,24 +607,41 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         float avgCost = total_time / infer_cnt;
         float avgFPS = 1000.f / avgCost;
 
-        printf("\n---------------- Final Result ----------------\n");
-        if (vision_ctx->device_id_mac) {
-            printf("DeviceId: %s\n", vision_ctx->device_id_mac);
-        }
+        // printf("\n---------------- Final Result ----------------\n");
+        // if (vision_ctx->device_id_mac) {
+        //     printf("DeviceId: %s\n", vision_ctx->device_id_mac);
+        // }
 
-        // Output input format based on actual img->format
+        // // Output input format based on actual img->format
+        // if (img->format == IMAGE_FORMAT_YUV420SP_NV12 || img->format == IMAGE_FORMAT_YUV420SP_NV21) {
+        //     printf("InputFormat: YUV420SP_NV12\n");
+        // } else if (img->format == IMAGE_FORMAT_RGB888) {
+        //     printf("InputFormat: RGB888\n");
+        // } else {
+        //     printf("InputFormat: unknown\n");
+        // }
+        g_perf.input_format[0] = '\0';
         if (img->format == IMAGE_FORMAT_YUV420SP_NV12 || img->format == IMAGE_FORMAT_YUV420SP_NV21) {
-            printf("InputFormat: YUV420SP_NV12\n");
+            strcpy(g_perf.input_format, "YUV420SP_NV12");
         } else if (img->format == IMAGE_FORMAT_RGB888) {
-            printf("InputFormat: RGB888\n");
+            strcpy(g_perf.input_format, "RGB888");
         } else {
-            printf("InputFormat: unknown\n");
+            strcpy(g_perf.input_format, "unknown");
         }
 
-        printf("RunCount: %d\n", infer_cnt);
-        printf("TotalTime: %.2f ms\n", total_time);
-        printf("AvgFPS: %.3f\n", avgFPS);
-        printf("AvgCost: %.2f ms\n", avgCost);
+        g_perf.device_id_mac[0] = '\0';
+        if (vision_ctx->device_id_mac) {
+            strcpy(g_perf.device_id_mac, vision_ctx->device_id_mac);
+            // printf("DeviceId: %s\n", g_perf.device_id_mac);
+        }
+        g_perf.infer_cnt = infer_cnt;
+        g_perf.total_time = total_time;
+        g_perf.avg_cost = avgCost;
+        g_perf.avg_FPS = avgFPS;
+        // printf("RunCount: %d\n", infer_cnt);
+        // printf("TotalTime: %.2f ms\n", total_time);
+        // printf("AvgFPS: %.3f\n", avgFPS);
+        // printf("AvgCost: %.2f ms\n", avgCost);
         // printf("Run Count: %d, Tot Time: %8.2f ms\n", infer_cnt, total_time);
         // printf("Avg FPS  : %.2f, Avg Cost : %8.2f ms\n", avgFPS, avgCost);
     }
@@ -686,8 +736,7 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
     // memcpy(img_embeds, (float16*)vision_ctx->outputs[0].mem->virt_addr,vision_ctx->outputs[0].mem->size);
 
 out:
-    if (dst_img.virt_addr != NULL)
-    {
+    if (dst_img.virt_addr != NULL) {
         free(dst_img.virt_addr);
     }
 

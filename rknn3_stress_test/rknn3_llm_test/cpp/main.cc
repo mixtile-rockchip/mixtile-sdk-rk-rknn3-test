@@ -315,6 +315,7 @@ int main(int argc, char **argv) {
     ret = parse_cmdline_args(argc, argv, &args);
     if (ret != 0 || args.show_help) {
         print_usage(argv[0], PROGRAM_TYPE_LLM, NULL, 0);
+        free_cmdline_args(&args);
         return args.show_help ? 0 : -1;
     }
 
@@ -326,6 +327,7 @@ int main(int argc, char **argv) {
     ret = validate_required_params(&args, PROGRAM_TYPE_LLM);
     if (ret != 0) {
         print_usage(argv[0], PROGRAM_TYPE_LLM, NULL, 0);
+        free_cmdline_args(&args);
         return -1;
     }
 
@@ -353,7 +355,7 @@ int main(int argc, char **argv) {
 
     int i = 0;
     int llm_n_inputs = 1;
-
+    int64_t tot_memory = 0;
     int prefill_n_tokens = 0;
     float prefill_per_second = 0.f;
 
@@ -361,7 +363,7 @@ int main(int argc, char **argv) {
     float tps = 0.f;
     float total_time = 0.f;
     float infer_total_time = 0.f;
-
+    float print_interval = 1 * 1000 * 40;  // 40s
     float last_time = 0.0f;
     int32_t last_decode_tokens = 0;
     TIMER cost_time;
@@ -415,6 +417,53 @@ int main(int argc, char **argv) {
     }
     init_timer.tok();
 
+    {
+        // Query model required core number
+        uint32_t model_core_num = 0;
+        ret = rknn3_query(ctx, RKNN3_QUERY_CORE_NUMBER, &model_core_num, sizeof(model_core_num));
+        if (ret < 0) {
+            printf("[rknn3_model_stress_test_error] rknn3_query core number failed! ret=%d\n", ret);
+            goto exit;
+        }
+        rknn3_core_mem_size *core_mem_sizes_llm = (rknn3_core_mem_size *)malloc(sizeof(rknn3_core_mem_size) * model_core_num);
+
+        if (!core_mem_sizes_llm) {
+            printf("Failed to allocate memory for core_mem_sizes_llm\n");
+            ret = -1;
+            goto exit;
+        }
+        free(core_mem_sizes_llm);
+
+        rknn3_allocation_info* allocation_info = (rknn3_allocation_info *)malloc(sizeof(rknn3_allocation_info)*model_core_num);
+        if (!allocation_info) {
+            printf("Failed to allocate memory for allocation_info\n");
+            ret = -1;
+            goto exit;
+        }
+        ret = rknn3_query(ctx, RKNN3_QUERY_ALLOCATION_INFO, allocation_info, sizeof(rknn3_allocation_info)*model_core_num);
+        if (ret < 0) {
+            printf("rknn3_query allocation info failed! ret=%d\n", ret);
+            free(allocation_info);
+            allocation_info = NULL;
+            goto exit;
+        }
+        // printf("allocation_info[i].weight_mem.size: %d\n",allocation_info[0].weight_mem.size);
+        for(int i = 0;i < model_core_num;i ++){
+            // printf("id:%d,allocation_info.weights_size=%d, allocation_info.internal_size=%d, allocation_info.weights_mem_size=%d, allocation_info.internal_mem_size=%d\n",
+            //     i,allocation_info[i].weight_mem.size, allocation_info[i].internal_mem.size, 
+            //     allocation_info[i].command_mem.size, allocation_info[i].kvcache_mem.size);
+            tot_memory += allocation_info[i].weight_mem.size;
+            tot_memory += allocation_info[i].internal_mem.size;
+            tot_memory += allocation_info[i].command_mem.size;
+            tot_memory += allocation_info[i].kvcache_mem.size;
+        
+        }
+        if(allocation_info) {
+            free(allocation_info);
+            allocation_info = NULL;
+        }
+    }
+    // printf("----------tot_memory:%ld\n",tot_memory);
     // get_tokenizer_and_embedding
     ret = get_tokenizer_and_embedding(args.tokenizer_path, &vocab_info, &tokenizer, &embedding_info, args.embedding_path, &emb_st);
     if (ret < 0) {
@@ -525,8 +574,13 @@ int main(int argc, char **argv) {
         acc_cnt++;
         acc_ms += total_time;
 
-        if (acc_cnt >= 100) {
-            printf("[rknn3_model_stress_test_log] run_cnt diff: %d, run cost: %8.2f ms \n", acc_cnt, acc_ms);
+        // if (acc_cnt >= 100) {
+        //     printf("[rknn3_model_stress_test_log] run_cnt diff: %d, run cost: %8.2f ms \n", acc_cnt, acc_ms);
+        //     acc_cnt = 0;
+        //     acc_ms = 0.0f;
+        // }
+        if (acc_ms >= print_interval) {
+            printf("run_cnt : %d, run cost: %8.2f ms \n", iter, infer_total_time);
             acc_cnt = 0;
             acc_ms = 0.0f;
         }
@@ -617,6 +671,7 @@ exit:
         printf("Model: %s\n", model_name);
         printf("DeviceID: %s\n", device_id_mac);
         printf("LoadModelCost: %.3f ms\n", init_timer.get_time());
+        printf("ModelMemory: %ld MB\n", tot_memory / (1024 * 1024));
         printf("TTFT: %.3f ms\n", ttft_ms);
         printf("TPOT: %.3f ms\n", tpot);
         printf("Prefill: %.3f tokens/s\n", prefill_per_second);
@@ -629,5 +684,6 @@ exit:
     fflush(stdout);
 
     free_cmdline_args(&args);
+
     return 0;
 }

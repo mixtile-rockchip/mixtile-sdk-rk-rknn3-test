@@ -40,6 +40,16 @@ typedef struct {
     uint32_t device_id;  // Device ID for memory monitoring
 } rknn_common_img_ctx;
 
+typedef struct {
+    int infer_cnt;
+    float total_time;
+    float avg_cost;
+    float avg_FPS;
+    int64_t tot_memory;
+    char device_id_mac[128];
+    char input_format[128];
+} rknn3_cnn_perf_t;
+
 int init_common_img(rknn_common_img_ctx* vision_ctx, const char* model_path, const char* weight_path, uint32_t core_mask,uint32_t device_id, image_format_t src_fmt);
 int release_common_img(rknn_common_img_ctx* vision_ctx);
 int inference_common_img(rknn_common_img_ctx* vision_ctx, image_buffer_t* img,uint32_t loop,float time_loop);

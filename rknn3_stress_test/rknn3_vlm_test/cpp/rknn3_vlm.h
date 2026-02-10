@@ -20,14 +20,26 @@
 #include "common.h"
 #include "rknn3_vlm_vision.h"
 #include "rknn3_vlm_llm.h"
+#include "easy_timer.h"
 
 // llm
 extern const rknn3_sampling_params SAMPLE_PARAMS;
-extern TIMER llm_perfill, llm_decode;
-extern TIMER infer_cost_time;
-extern int32_t infer_loop_cnt;
-extern float tps;
-extern int32_t gen_tokens;
+
+typedef struct {
+    TIMER vision_cost;
+    TIMER llm_perfill;
+    TIMER llm_decode;
+    TIMER vl_cost;
+    TIMER infer_cost_time;
+    float tps;
+    int32_t gen_tokens;
+    int32_t infer_loop_cnt;
+    TIMER load_vision_model;
+    TIMER load_llm_model;
+    int64_t tot_memory;
+} rknn3_vlm_perf_t;
+
+extern rknn3_vlm_perf_t g_vlm_perf;
 
 typedef struct {
     rknn3_vlm_llm_context llm;

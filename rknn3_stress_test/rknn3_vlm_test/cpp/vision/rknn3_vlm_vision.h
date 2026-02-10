@@ -23,7 +23,6 @@
 #define MODEL_WIDTH 384 // 由于vision模型被裁剪了，需要手动添加这些参数配置
 #define MODEL_HEIGHT 384
 #define RKNN3_DEFAULT_DEVICE_ID 0
-extern TIMER vision_cost;
 
 typedef struct {
     rknn3_context rknn_ctx;

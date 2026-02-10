@@ -20,7 +20,7 @@
 // #include "easy_timer.h"
 
 #include "rknn3_vlm_llm.h"
-extern TIMER llm_perfill, llm_decode;
+#include "rknn3_vlm.h"
 
 int init_rknn3_vlm_llm(rknn3_vlm_llm_context *llm_ctx, const char *model_path, const char *weight_path, rknn3_llm_param *params, int n_params, RKLLMCallback callback, uint32_t core_mask) {
     int ret;
@@ -174,7 +174,7 @@ int inference_rknn3_vlm_llm(rknn3_vlm_llm_context *llm_ctx, rknn3_llm_multimodal
     // int prefill_n_tokens = 0;
     // int32_t need_tokens_len = 256;
     for (int i = 0; i < loop; i++) {
-        llm_perfill.tik();
+        g_vlm_perf.llm_perfill.tik();
         if (n_inputs > 1) {
             for (int i = 1; i < n_inputs; ++i) {
                 inputs[i].input_type = RKNN3_LLM_INPUT_AUX;
