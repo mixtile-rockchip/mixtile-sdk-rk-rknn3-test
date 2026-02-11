@@ -56,7 +56,6 @@ void init_cmdline_args(cmdline_args_t *args) {
     args->yuv_input = false;
 
     args->max_context_len = 1024;
-    // args->core_mask = 0xff;
     args->n_input_tokens = DEFAULT_N_INPUT_TOKENS;
     args->max_new_tokens = DEFAULT_MAX_NEW_TOKENS;
     args->vision_core_mask = DEFAULT_VISION_CORE_MASK;
@@ -64,8 +63,6 @@ void init_cmdline_args(cmdline_args_t *args) {
     args->vision_loop = DEFAULT_VISION_LOOP;
     args->llm_loop = DEFAULT_LLM_LOOP;
     args->model_folder = NULL;
-    // args->model_path = NULL;
-    // args->weight_path = NULL;
 }
 
 void free_cmdline_args(cmdline_args_t *args) {
@@ -173,6 +170,7 @@ void print_usage(const char *argv0, int program_type, const param_def_t *custom_
         printf("  -vl, --vision_loop           Vision loop count (default: 1)\n");
         printf("  -ll, --llm_loop              LLM loop count (default: 1)\n");
     }
+    // Audio specific parameters
     if (program_type == PROGRAM_TYPE_AUDIO) {
         printf("\nAudio Encoder Specific Parameters:\n");
         printf("  -m, --model_path             Model path (.rknn)\n");
@@ -372,21 +370,13 @@ int parse_cmdline_args(int argc, char **argv, cmdline_args_t *args) {
     return 0;
 }
 
-static bool has_suffix(const char *str, const char *suffix) {
-    if (!str || !suffix) return false;
-    size_t str_len = strlen(str);
-    size_t suffix_len = strlen(suffix);
-    if (suffix_len > str_len) return false;
-    return strcmp(str + str_len - suffix_len, suffix) == 0;
-}
-
-int populate_args_from_model_folder(cmdline_args_t *args, program_type_t program_type) {
-    if (!args || !args->model_folder) return 0;
+static void populate_args_from_folder(cmdline_args_t *args, program_type_t program_type) {
+    if (!args || !args->model_folder) return;
 
     DIR *dir = opendir(args->model_folder);
     if (!dir) {
-        printf("[rknn3_model_stress_test_error] Could not open model_folder: %s\n", args->model_folder);
-        return -1;
+        printf("[rknn3_model_stress_test_warnning] Could not open model_folder: %s\n", args->model_folder);
+        return;
     }
 
     struct dirent *ent;
@@ -394,114 +384,104 @@ int populate_args_from_model_folder(cmdline_args_t *args, program_type_t program
         if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
 
         char full_path[1024];
-        int path_len = snprintf(full_path, sizeof(full_path), "%s/%s", args->model_folder, ent->d_name);
-        if (path_len < 0 || path_len >= (int)sizeof(full_path)) {
-            printf("[rknn3_model_stress_test_warnning] Skip overlong path: %s/%s\n", args->model_folder, ent->d_name);
-            continue;
-        }
+        snprintf(full_path, sizeof(full_path), "%s/%s", args->model_folder, ent->d_name);
 
 #define SET_IF_NULL(target, val) \
     if (!target) target = strdup(val)
 
         if (program_type == PROGRAM_TYPE_CNN) {
-            if (has_suffix(ent->d_name, ".rknn")) {
+            if (strstr(ent->d_name, ".rknn")) {
                 SET_IF_NULL(args->model_path, full_path);
-            } else if (has_suffix(ent->d_name, ".weight")) {
+            } else if (strstr(ent->d_name, ".weight")) {
                 SET_IF_NULL(args->weight_path, full_path);
             }
         } else if (program_type == PROGRAM_TYPE_LLM) {
-            if (has_suffix(ent->d_name, ".rknn")) {
+            if (strstr(ent->d_name, ".rknn")) {
                 SET_IF_NULL(args->model_path, full_path);
-            } else if (has_suffix(ent->d_name, ".weight")) {
+            } else if (strstr(ent->d_name, ".weight")) {
                 SET_IF_NULL(args->weight_path, full_path);
-            } else if (has_suffix(ent->d_name, ".tokenizer.gguf")) {
+            } else if (strstr(ent->d_name, ".tokenizer.gguf")) {
                 SET_IF_NULL(args->tokenizer_path, full_path);
-            } else if (has_suffix(ent->d_name, ".embed.bin")) {
+            } else if (strstr(ent->d_name, ".embed.bin")) {
                 SET_IF_NULL(args->embedding_path, full_path);
             }
         } else if (program_type == PROGRAM_TYPE_VLM) {
-            if (has_suffix(ent->d_name, ".rknn")) {
-                printf("[rknn3_model_stress_test_info] ent->d_name: %s\n", ent->d_name);
+            if (strstr(ent->d_name, ".rknn")) {
                 if (strstr(ent->d_name, "vision") || strstr(ent->d_name, "encoder")) {
                     SET_IF_NULL(args->vision_model_path, full_path);
-                    printf("[rknn3_model_stress_test_info] vision_model_path: %s\n", args->vision_model_path);
                 } else if (strstr(ent->d_name, "llm") || strstr(ent->d_name, "decoder")) {
                     SET_IF_NULL(args->llm_model_path, full_path);
-                    printf("[rknn3_model_stress_test_info] llm_model_path: %s\n", args->llm_model_path);
                 }
-            } else if (has_suffix(ent->d_name, ".weight")) {
+            } else if (strstr(ent->d_name, ".weight")) {
                 if (strstr(ent->d_name, "vision") || strstr(ent->d_name, "encoder")) {
                     SET_IF_NULL(args->vision_weight_path, full_path);
-                    printf("[rknn3_model_stress_test_info] vision_weight_path: %s\n", args->vision_weight_path);
                 } else if (strstr(ent->d_name, "llm") || strstr(ent->d_name, "decoder")) {
                     SET_IF_NULL(args->llm_weight_path, full_path);
-                    printf("[rknn3_model_stress_test_info] llm_weight_path: %s\n", args->llm_weight_path);
                 }
             } else if (strstr(ent->d_name, "tokenizer")) {
                 SET_IF_NULL(args->tokenizer_path, full_path);
             } else if (strstr(ent->d_name, "embed")) {
                 SET_IF_NULL(args->embedding_path, full_path);
-            } else if (has_suffix(ent->d_name, ".ini")) {
+            } else if (strstr(ent->d_name, ".ini")) {
                 SET_IF_NULL(args->prompt_ini_path, full_path);
             }
         } else if (program_type == PROGRAM_TYPE_AUDIO) {
-            if (has_suffix(ent->d_name, ".rknn")) {
+            if (strstr(ent->d_name, ".rknn")) {
                 SET_IF_NULL(args->model_path, full_path);
-                // printf("[rknn3_model_stress_test_info] model_path: %s\n", args->model_path);
-            } else if (has_suffix(ent->d_name, ".weight")) {
+            } else if (strstr(ent->d_name, ".weight")) {
                 SET_IF_NULL(args->weight_path, full_path);
-                // printf("[rknn3_model_stress_test_info] weight_path: %s\n", args->weight_path);
             }
         }
 #undef SET_IF_NULL
     }
     closedir(dir);
-    return 0;
 }
 
-int validate_required_params(const cmdline_args_t *args, program_type_t program_type) {
+int populate_args_from_model_folder(cmdline_args_t *args, program_type_t program_type) {
     if (!args) {
         printf("[rknn3_model_stress_test_error] args is NULL\n");
         return -1;
     }
 
+    populate_args_from_folder(args, program_type);
+    return 0;
+}
+
+int validate_required_params(cmdline_args_t *args, program_type_t program_type) {
+    if (!args) {
+        printf("[rknn3_model_stress_test_error] args is NULL\n");
+        return -1;
+    }
+
+    if (args->model_folder) {
+        populate_args_from_folder(args, program_type);
+    }
+
     switch (program_type) {
         case PROGRAM_TYPE_CNN:
-            if (!args->model_path || !args->weight_path) {
+            if (!args->model_folder && (!args->model_path || !args->weight_path)) {
                 printf("[rknn3_model_stress_test_error] Missing required arguments: model_path or weight_path\n");
-                return -1;
-            }
-            if (!args->image_path) {
-                printf("[rknn3_model_stress_test_error] Missing required argument: image_path\n");
                 return -1;
             }
             break;
 
         case PROGRAM_TYPE_LLM:
-            if (!args->model_path || !args->weight_path || !args->tokenizer_path || !args->embedding_path) {
+            if (!args->model_folder && (!args->model_path || !args->weight_path || !args->tokenizer_path || !args->embedding_path)) {
                 printf("[rknn3_model_stress_test_error] Missing required arguments\n");
                 return -1;
             }
             break;
 
         case PROGRAM_TYPE_VLM:
-            if (!args->vision_model_path || !args->vision_weight_path || !args->llm_model_path ||
-                !args->llm_weight_path || !args->tokenizer_path || !args->embedding_path) {
+            if (!args->model_folder && (!args->vision_model_path || !args->vision_weight_path || !args->llm_model_path ||
+                                        !args->llm_weight_path || !args->tokenizer_path || !args->embedding_path)) {
                 printf("[rknn3_model_stress_test_error] Missing required arguments\n");
-                return -1;
-            }
-            if (!args->image_path) {
-                printf("[rknn3_model_stress_test_error] Missing required argument: image_path\n");
-                return -1;
-            }
-            if (!args->prompt_ini_path) {
-                printf("[rknn3_model_stress_test_error] Missing required argument: prompt_ini_path\n");
                 return -1;
             }
             break;
 
         case PROGRAM_TYPE_AUDIO:
-            if (!args->model_path || !args->weight_path) {
+            if (!args->model_folder && (!args->model_path || !args->weight_path)) {
                 printf("[rknn3_model_stress_test_error] Missing required arguments: model_path or weight_path\n");
                 return -1;
             }

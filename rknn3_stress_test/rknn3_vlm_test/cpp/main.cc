@@ -16,19 +16,21 @@
                 Includes
 -------------------------------------------*/
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
+#include "cmdline_parser.h"
 #include "easy_timer.h"
 #include "image_utils.h"
 #include "rknn3_ini.h"
 #include "rknn3_vlm.h"
-#include "cmdline_parser.h"
 
 rknn3_vlm_perf_t g_vlm_perf;
 int32_t first_tokens = 1;
@@ -49,10 +51,6 @@ const rknn3_sampling_params SAMPLE_PARAMS = {
     .presence_penalty = 0.0f
 };
 
-// const char* system_prompt  = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n";
-// const char* prompt_prefix  = "<|im_start|>user\n";
-// const char* prompt_postfix = "<|im_end|>\n<|im_start|>assistant\n";
-// '<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|>*x<|vision_end|>这张图片是关于什么的<|im_end|>\n<|im_start|>assistant\n'
 /*-------------------------------------------
                 Callback Function
 -------------------------------------------*/
@@ -79,7 +77,6 @@ int result_callback(void *userdata, RKLLMResult *result, LLMCallState state) {
         printf("\n\n-----------------------Stop--------------------- \n");
         return 0;
     } else if (state == RKLLM_RUN_NORMAL) {
-
         if (first_tokens) {
             g_vlm_perf.llm_decode.tik();
             g_vlm_perf.llm_perfill.tok();
@@ -87,8 +84,7 @@ int result_callback(void *userdata, RKLLMResult *result, LLMCallState state) {
             first_tokens = 0;
             g_vlm_perf.gen_tokens = 1;
 
-        }
-        else {
+        } else {
             g_vlm_perf.gen_tokens += 1;
         }
         if (is_print_result) {
@@ -151,10 +147,6 @@ int main(int argc, char **argv) {
         return args.show_help ? 0 : -1;
     }
 
-    if (args.model_folder) {
-        (void)populate_args_from_model_folder(&args, PROGRAM_TYPE_VLM);
-    }
-
     // Validate required arguments for VLM using common function
     ret = validate_required_params(&args, PROGRAM_TYPE_VLM);
     if (ret != 0) {
@@ -167,6 +159,8 @@ int main(int argc, char **argv) {
 
     // Print configuration using common function
     print_configuration(&args, PROGRAM_TYPE_VLM);
+
+    srand((unsigned int)time(NULL));
 
     if (ini_load(args.prompt_ini_path) != 0) {
         fprintf(stderr, "cannot load ini\n");
@@ -186,15 +180,15 @@ int main(int argc, char **argv) {
 
     is_print_result = print_result;
 
-    //init g_vlm_perf
+    // init g_vlm_perf
     g_vlm_perf.tot_memory = 0;
-    
+
     // RKNN Context
     rknn_app_context_t rknn_app_ctx;
     memset(&rknn_app_ctx, 0, sizeof(rknn_app_context_t));
 
     // Tokenizer
-    Tokenizer *tokenizer;
+    Tokenizer *tokenizer = NULL;
     VocabInfo vocab_info;
 
     // Embedding
@@ -213,7 +207,7 @@ int main(int argc, char **argv) {
 
     // Image Embed
     size_t embed_elems = 1;
-    float16 *img_embeds;
+    float16 *img_embeds = NULL;
 
     // LLM Multi Model Tensor
     // int n_inputs = 1;
@@ -232,8 +226,8 @@ int main(int argc, char **argv) {
     }
 
     tokenizer->GetVocabInfo(&(vocab_info));
-    printf("vocab_info: vocab_size=%d special_bos_id=%d special_eos_id=%d\n", vocab_info.vocab_size,
-           vocab_info.special_bos_id, vocab_info.special_eos_id);
+    printf("vocab_info: vocab_size=%d n_special_bos_id=%d n_special_eos_id=%d\n", vocab_info.vocab_size,
+           vocab_info.n_special_bos_id, vocab_info.n_special_eos_id);
 
     // Read Embedding
     embedding_info.fd = open(args.embedding_path, O_RDONLY);
@@ -257,7 +251,7 @@ int main(int argc, char **argv) {
     embedding_info.embedding_dim = (emb_st.st_size / vocab_info.vocab_size) / sizeof(float16);
 
     // Set LLM parameters
-    params.logits_name = (char*)"logits";
+    params.logits_name = (char *)"logits";
     params.max_context_len = MAX_CONTEXT_LEN;
     params.sampling_param = SAMPLE_PARAMS;
     params.vocab_info.vocab_size = vocab_info.vocab_size;
@@ -298,16 +292,38 @@ int main(int argc, char **argv) {
     }
     img_embeds = (float16 *)malloc((embed_elems) * sizeof(float16));
 
-    // Read Image
-    ret = read_image(args.image_path, &src_image);
-    if (ret != 0) {
-        printf("[rknn3_model_stress_test_error] read image fail! ret=%d image_path=%s\n", ret, args.image_path);
-        free_cmdline_args(&args);
-        goto out;
+    src_image.format = args.yuv_input ? IMAGE_FORMAT_YUV420SP_NV12 : IMAGE_FORMAT_RGB888;
+    if (args.image_path == NULL || strlen(args.image_path) == 0) {
+        const int kMaxRandomInputSize = 100 * 1024 * 1024;  // 100MB hard limit
+        src_image.width = 640;
+        src_image.height = 640;
+        int64_t expected_size = args.yuv_input
+                                    ? ((int64_t)src_image.width * src_image.height * 3) / 2
+                                    : ((int64_t)src_image.width * src_image.height * 3);
+        if (expected_size <= 0 || expected_size > INT_MAX || expected_size > kMaxRandomInputSize) {
+            printf("[rknn3_model_stress_test_error] invalid random input size: %lld\n", (long long)expected_size);
+            ret = -1;
+            goto out;
+        }
+        src_image.size = (int)expected_size;
+        src_image.virt_addr = (uint8_t *)malloc(src_image.size);
+        if (!src_image.virt_addr) {
+            printf("[rknn3_model_stress_test_error] malloc random input buffer fail!\n");
+            ret = -1;
+            goto out;
+        }
+        // 填充随机数据
+        for (int i = 0; i < src_image.size; ++i) {
+            src_image.virt_addr[i] = rand() & 0xFF;
+        }
+    } else {
+        ret = read_image(args.image_path, &src_image);
+        if (ret != 0) {
+            printf("[rknn3_model_stress_test_error] read image fail! ret=%d image_path=%s\n", ret, args.image_path);
+            goto out;
+        }
     }
 
-    // LLM Input
-    // tensor.name           = "input_embeds";
     tensor.name = ini_get("tensor", "input_embeds", "");
     tensor.prompt = prompt;
     tensor.image.image_embed = img_embeds;
@@ -322,12 +338,10 @@ int main(int argc, char **argv) {
     tensor.image.image_height = rknn_app_ctx.vision.model_height;
     tensor.enable_thinking = false;
 
-    // strncpy((char *)tensor.img_start,(char *)img_start,strlen(img_start) - 1);
     tensor.image.image_start = ini_get("tensor", "img_start", "");
     tensor.image.image_end = ini_get("tensor", "img_end", "");
     tensor.image.image_content = ini_get("tensor", "img_content", "");
 
-    // g_vlm_perf.llm_perfill.tik();
     g_vlm_perf.vl_cost.tik();
     ret = inference_rknn3_vlm_model(&rknn_app_ctx, &src_image, tensor, args.vision_loop, args.llm_loop, args.time_loop);
     if (ret != 0) {
@@ -355,8 +369,8 @@ int main(int argc, char **argv) {
             }
         }
         printf("\n===== RKNN3_VLM_TEST Results Summary =====\n\n");
-        printf("Model: %s\n",model_name);
-        printf("DeviceID: %s\n",rknn_app_ctx.llm.device_mac);
+        printf("Model: %s\n", model_name);
+        printf("DeviceID: %s\n", rknn_app_ctx.llm.device_mac);
         printf("LoadVisionModelTime: %.3f ms\n", g_vlm_perf.load_vision_model.get_time());
         printf("LoadLLMModelTime: %.3f ms\n", g_vlm_perf.load_llm_model.get_time());
         printf("ModelMemory: %.3f MB\n", (float)g_vlm_perf.tot_memory / (1024. * 1024.));
@@ -364,8 +378,8 @@ int main(int argc, char **argv) {
         printf("GenLen: %d tokens\n", g_vlm_perf.gen_tokens);
         printf("TTFT: %.3f ms\n", g_vlm_perf.llm_perfill.get_time());
         printf("TPS: %.3f tokens/s\n", g_vlm_perf.tps);
-        printf("TotalTime: %.3f ms\n",g_vlm_perf.infer_cost_time.get_time());
-        printf("TotalRuns: %d\n",g_vlm_perf.infer_loop_cnt);
+        printf("TotalTime: %.3f ms\n", g_vlm_perf.infer_cost_time.get_time());
+        printf("TotalRuns: %d\n", g_vlm_perf.infer_loop_cnt);
         printf("\n=================================\n");
         printf("[rknn3_model_stress_test_done]\n");
     }

@@ -21,6 +21,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "cmdline_parser.h"
@@ -76,10 +77,6 @@ int main(int argc, char **argv) {
         return args.show_help ? 0 : -1;
     }
 
-    if (args.model_folder) {
-        (void)populate_args_from_model_folder(&args, PROGRAM_TYPE_CNN);
-    }
-
     // Validate required arguments using common function
     ret = validate_required_params(&args, PROGRAM_TYPE_CNN);
     if (ret != 0) {
@@ -93,6 +90,8 @@ int main(int argc, char **argv) {
 
     // Print configuration using common function
     print_configuration(&args, PROGRAM_TYPE_CNN);
+
+    srand((unsigned int)time(NULL));
 
     // RKNN Context
     rknn_common_img_ctx rknn_app_ctx;
@@ -109,7 +108,8 @@ int main(int argc, char **argv) {
     if (args.image_path == NULL || strlen(args.image_path) == 0) {
         src_image.width = 640;
         src_image.height = 640;
-        src_image.size = src_image.width * src_image.height * (args.yuv_input ? 3 / 2 : 3);
+        src_image.size = args.yuv_input ? (src_image.width * src_image.height * 3) / 2
+                                        : (src_image.width * src_image.height * 3);
         src_image.virt_addr = (uint8_t *)malloc(src_image.size);
         if (!src_image.virt_addr) {
             printf("[rknn3_model_stress_test_error] malloc random input buffer fail!\n");
@@ -129,14 +129,6 @@ int main(int argc, char **argv) {
             return -1;
         }
     }
-    // // Read Image
-    // ret = read_image(args.image_path, &src_image);
-    // if (ret != 0) {
-    //     printf("[rknn3_model_stress_test_error] read image fail! ret=%d image_path=%s\n", ret, args.image_path);
-    //     free_cmdline_args(&args);
-    //     return -1;
-    // }
-
     // Initialize model
     ret = init_common_img(&rknn_app_ctx, args.model_path, args.weight_path,
                           args.core_mask, args.device_id, src_image.format);

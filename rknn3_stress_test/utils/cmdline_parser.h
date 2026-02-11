@@ -145,7 +145,7 @@ int populate_args_from_model_folder(cmdline_args_t *args, program_type_t program
  * @param program_type Program type (CNN/LLM/VLM)
  * @return 0 if valid, -1 if missing required parameters
  */
-int validate_required_params(const cmdline_args_t *args, program_type_t program_type);
+int validate_required_params(cmdline_args_t *args, program_type_t program_type);
 
 /**
  * @brief Print configuration based on program type

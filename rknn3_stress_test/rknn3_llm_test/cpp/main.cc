@@ -319,10 +319,6 @@ int main(int argc, char **argv) {
         return args.show_help ? 0 : -1;
     }
 
-    if (args.model_folder) {
-        (void)populate_args_from_model_folder(&args, PROGRAM_TYPE_LLM);
-    }
-
     // Validate required arguments using common function
     ret = validate_required_params(&args, PROGRAM_TYPE_LLM);
     if (ret != 0) {
@@ -434,13 +430,13 @@ int main(int argc, char **argv) {
         }
         free(core_mem_sizes_llm);
 
-        rknn3_allocation_info* allocation_info = (rknn3_allocation_info *)malloc(sizeof(rknn3_allocation_info)*model_core_num);
+        rknn3_allocation_info *allocation_info = (rknn3_allocation_info *)malloc(sizeof(rknn3_allocation_info) * model_core_num);
         if (!allocation_info) {
             printf("Failed to allocate memory for allocation_info\n");
             ret = -1;
             goto exit;
         }
-        ret = rknn3_query(ctx, RKNN3_QUERY_ALLOCATION_INFO, allocation_info, sizeof(rknn3_allocation_info)*model_core_num);
+        ret = rknn3_query(ctx, RKNN3_QUERY_ALLOCATION_INFO, allocation_info, sizeof(rknn3_allocation_info) * model_core_num);
         if (ret < 0) {
             printf("rknn3_query allocation info failed! ret=%d\n", ret);
             free(allocation_info);
@@ -448,17 +444,16 @@ int main(int argc, char **argv) {
             goto exit;
         }
         // printf("allocation_info[i].weight_mem.size: %d\n",allocation_info[0].weight_mem.size);
-        for(int i = 0;i < model_core_num;i ++){
+        for (int i = 0; i < model_core_num; i++) {
             // printf("id:%d,allocation_info.weights_size=%d, allocation_info.internal_size=%d, allocation_info.weights_mem_size=%d, allocation_info.internal_mem_size=%d\n",
-            //     i,allocation_info[i].weight_mem.size, allocation_info[i].internal_mem.size, 
+            //     i,allocation_info[i].weight_mem.size, allocation_info[i].internal_mem.size,
             //     allocation_info[i].command_mem.size, allocation_info[i].kvcache_mem.size);
             tot_memory += allocation_info[i].weight_mem.size;
             tot_memory += allocation_info[i].internal_mem.size;
             tot_memory += allocation_info[i].command_mem.size;
             tot_memory += allocation_info[i].kvcache_mem.size;
-        
         }
-        if(allocation_info) {
+        if (allocation_info) {
             free(allocation_info);
             allocation_info = NULL;
         }
