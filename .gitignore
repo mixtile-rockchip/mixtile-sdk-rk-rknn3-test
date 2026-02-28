@@ -1,2 +1,6 @@
 /build/
 /install/
+rknn3_stress_test/rknn3_cnn_test/cpp/.cache/
+rknn3_stress_test/rknn3_cnn_test/cpp/.clangd
+rknn3_stress_test/rknn3_llm_test/cpp/.clangd
+rknn3_stress_test/rknn3_vlm_test/cpp/.clangd

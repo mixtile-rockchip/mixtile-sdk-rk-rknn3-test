@@ -54,7 +54,7 @@ static void dump_tensor_attr(rknn3_tensor_attr *attrs) {
 }
 
 int init_common_img(rknn_common_img_ctx *vision_ctx, const char *model_path, const char *weight_path, uint32_t core_mask, uint32_t device_id, image_format_t src_fmt) {
-    int ret;
+    int ret = 0;
     rknn3_context ctx = 0;
     rknn3_config config;
     memset(&config, 0, sizeof(config));
@@ -450,7 +450,7 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         return -1;
     }
 
-    int ret;
+    int ret = 0;
     image_buffer_t dst_img;
     memset(&dst_img, 0, sizeof(image_buffer_t));
     int32_t warmup_cnt = 5;
@@ -516,7 +516,7 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         // printf("\n");
     }
 
-    if (warmup_cnt) {
+    while (warmup_cnt > 0) {
         if (img->format == IMAGE_FORMAT_RGB888) {
             // --- Sync Input ---
             for (int i = 0; i < vision_ctx->io_num.n_input; i++) {
@@ -544,7 +544,11 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
 
         // --- Sync Output ---
         for (int i = 0; i < vision_ctx->io_num.n_output; i++) {
-            rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
+            ret = rknn3_mem_sync(vision_ctx->rknn_ctx, vision_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
+            if (ret != RKNN3_SUCCESS) {
+                printf("rknn3_mem_sync output[%d] failed! ret=%d\n", i, ret);
+                goto out;
+            }
         }
         warmup_cnt --;
     }
