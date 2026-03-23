@@ -42,6 +42,7 @@ int init_audio_encoder(rknn_audio_encoder_context* audio_ctx, const char* model_
     // Find RK182X devices
     rknn3_devices rknn3_devices;
     memset(&rknn3_devices, 0, sizeof(rknn3_devices));
+#ifndef SKIP_FIND_DEVICES
     ret = rknn3_find_devices(&rknn3_devices);
     if (ret != RKNN3_SUCCESS || rknn3_devices.n_devices <= 0) {
         printf(RKNN3_AUDIO_ENC_ERR "find devices failed, or data is invalid: %d\n", ret);
@@ -55,9 +56,16 @@ int init_audio_encoder(rknn_audio_encoder_context* audio_ctx, const char* model_
     }
 
     printf(RKNN3_AUDIO_ENC_LOG "device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
+#else
+    printf(RKNN3_AUDIO_ENC_LOG "SKIP_FIND_DEVICES enabled, skip rknn3_find_devices\n");
+#endif
 
     rknn3_init_extend init_extend = {0};
+#ifndef SKIP_FIND_DEVICES
     init_extend.device_id = rknn3_devices.devices[device_id].id;
+#else
+    init_extend.device_id = NULL;
+#endif
 
     // RKNN Init
     ret = rknn3_init(&ctx, &init_extend);

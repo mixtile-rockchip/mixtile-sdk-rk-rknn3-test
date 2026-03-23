@@ -64,6 +64,7 @@ int init_common_img(rknn_common_img_ctx *vision_ctx, const char *model_path, con
     // 获取目前连接的RK182X信息
     rknn3_devices rknn3_devices;
     memset(&rknn3_devices, 0, sizeof(rknn3_devices));
+#ifndef SKIP_FIND_DEVICES
     ret = rknn3_find_devices(&rknn3_devices);
     if (ret != RKNN3_SUCCESS || rknn3_devices.n_devices <= 0) {
         printf("find devices failed, or data is invalid: %d\n", ret);
@@ -77,9 +78,17 @@ int init_common_img(rknn_common_img_ctx *vision_ctx, const char *model_path, con
     vision_ctx->device_id = device_id;  // Save device_id for memory monitoring
     memcpy(vision_ctx->device_id_mac, rknn3_devices.devices[device_id].id, sizeof(rknn3_devices.devices[device_id].id));
     printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
+#else
+    vision_ctx->device_id = device_id;
+    printf("[rknn3_stress_test_log] SKIP_FIND_DEVICES enabled, skip rknn3_find_devices\n");
+#endif
 
     rknn3_init_extend init_extend = { 0 };
+#ifndef SKIP_FIND_DEVICES
     init_extend.device_id = rknn3_devices.devices[device_id].id;
+#else
+    init_extend.device_id = NULL;
+#endif
 
     // RKNN Init
     ret = rknn3_init(&ctx, &init_extend);
@@ -473,9 +482,16 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
             goto out;
         }
 
+        
         ret = convert_image(img, &yuv_img, NULL, NULL, 0);
+        printf("[rknn3_model_stress_test_log] convert_image fail! ret=%d, img(%dx%d, format=%d, size=%d), yuv_img(%dx%d, format=%d, size=%d)\n",
+                   ret, img->width, img->height, (int)img->format, img->size,
+                   yuv_img.width, yuv_img.height, (int)yuv_img.format, yuv_img.size);
+            
         if (ret < 0) {
-            printf("[rknn3_model_stress_test_error] convert_image fail! ret=%d\n", ret);
+            printf("[rknn3_model_stress_test_error] convert_image fail! ret=%d, img(%dx%d, format=%d, size=%d), yuv_img(%dx%d, format=%d, size=%d)\n",
+                   ret, img->width, img->height, (int)img->format, img->size,
+                   yuv_img.width, yuv_img.height, (int)yuv_img.format, yuv_img.size);
             goto out;
         }
 
@@ -489,12 +505,17 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
             printf("[rknn3_model_stress_test_error] malloc buffer size:%d fail!\n", dst_img.size);
             goto out;
         }
-
+        
+        printf("test convert_image\n");
         ret = convert_image(img, &dst_img, NULL, NULL, 0);
         if (ret < 0) {
             printf("[rknn3_model_stress_test_error] convert_image fail! ret=%d\n", ret);
             goto out;
         }
+        printf("[rknn3_model_stress_test_log] test convert_image: img(%dx%d, format=%d, size=%d), dst_img(%dx%d, format=%d, size=%d)\n",
+               img->width, img->height, (int)img->format, img->size,
+               dst_img.width, dst_img.height, (int)dst_img.format, dst_img.size);
+          
 
         // Set Input Data
         memcpy(vision_ctx->inputs[0].mem->virt_addr, (uint8_t *)dst_img.virt_addr, dst_img.size);
@@ -505,6 +526,7 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
         // printf("\n");
     }
 
+    printf("test warmup\n");
     while (warmup_cnt > 0) {
         if (img->format == IMAGE_FORMAT_RGB888) {
             // --- Sync Input ---
@@ -539,7 +561,7 @@ int inference_common_img(rknn_common_img_ctx *vision_ctx, image_buffer_t *img, u
                 goto out;
             }
         }
-        warmup_cnt --;
+        warmup_cnt--;
     }
     printf("[rknn3_model_stress_test_log] warm up done.\n");
     tot_cost.tik();

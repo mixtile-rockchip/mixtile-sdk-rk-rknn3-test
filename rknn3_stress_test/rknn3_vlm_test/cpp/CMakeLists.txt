@@ -13,6 +13,12 @@ if (ENABLE_ASAN)
     set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
     set (CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
 endif ()
+
+if (SKIP_FIND_DEVICES)
+    message(STATUS "SKIP_FIND_DEVICES enabled - rknn3_find_devices will be disabled")
+    add_definitions(-DSKIP_FIND_DEVICES)
+endif ()
+
 add_definitions(-D_POSIX_C_SOURCE=199309L)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../rknn/rknn3-model-zoo/3rdparty/ 3rdparty.out)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../utils/ utils.out)

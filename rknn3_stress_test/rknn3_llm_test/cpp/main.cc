@@ -153,6 +153,7 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
     // find devices
     rknn3_devices devs;
     memset(&devs, 0, sizeof(devs));
+#ifndef SKIP_FIND_DEVICES
     ret = rknn3_find_devices(&devs);
     if (ret != RKNN3_SUCCESS || devs.n_devices == 0) {
         printf("[rknn3_stress_test_error] rknn3_find_devices fail! ret=%d, devs.n_devices = %d\n", ret, devs.n_devices);
@@ -172,11 +173,15 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
     }
 
     printf("[rknn3_stress_test_log] device[0].id=%s\n", devs.devices[0].id);
+#else
+    printf("[rknn3_stress_test_log] SKIP_FIND_DEVICES enabled, skip rknn3_find_devices\n");
+#endif
 
     // init context
     rknn3_init_extend extend;
     memset(&extend, 0, sizeof(extend));
 
+#ifndef SKIP_FIND_DEVICES
     // 根据是否指定了设备ID来设置
     if (device_id != nullptr) {
         // 使用指定的设备ID
@@ -187,6 +192,12 @@ rknn3_context init_context_and_model(const char *model_path, const char *weight_
         extend.device_id = devs.devices[0].id;
         printf("[rknn3_stress_test_log] Using first device ID: %s\n", extend.device_id);
     }
+#else
+    extend.device_id = (char *)device_id;
+    if (device_id != nullptr) {
+        printf("[rknn3_stress_test_log] Using specified device ID: %s\n", device_id);
+    }
+#endif
     // memcpy(device_id_mac,)
     ret = rknn3_init(&ctx, &extend);
     if (ret < 0) {
@@ -382,25 +393,36 @@ int main(int argc, char **argv) {
     // 获取目前连接的RK182X信息
     rknn3_devices rknn3_devices;
     memset(&rknn3_devices, 0, sizeof(rknn3_devices));
+#ifndef SKIP_FIND_DEVICES
     ret = rknn3_find_devices(&rknn3_devices);
     if (ret != RKNN3_SUCCESS || rknn3_devices.n_devices <= 0) {
         printf("find devices failed, or data is invalid: %d\n", ret);
         free_cmdline_args(&args);
         return ret;
     }
+#endif
 
     uint32_t device_id = args.device_id;
+#ifndef SKIP_FIND_DEVICES
     if (device_id >= rknn3_devices.n_devices) {
         printf("warning!!! device_id = %d is not allow ,use default:%d, %s, %d\n", device_id, RKNN3_DEFAULT_DEVICE_ID, __FUNCTION__, __LINE__);
         device_id = RKNN3_DEFAULT_DEVICE_ID;
     }
 
     printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
+#else
+    printf("[rknn3_stress_test_log] SKIP_FIND_DEVICES enabled, skip rknn3_find_devices\n");
+#endif
 
     rknn3_init_extend init_extend = { 0 };
+#ifndef SKIP_FIND_DEVICES
     init_extend.device_id = rknn3_devices.devices[device_id].id;
     char device_id_mac[128];
     memcpy(device_id_mac, rknn3_devices.devices[device_id].id, sizeof(rknn3_devices.devices[device_id].id));
+#else
+    init_extend.device_id = NULL;
+    char device_id_mac[128] = {0};
+#endif
 
     TIMER init_timer;
     init_timer.tik();

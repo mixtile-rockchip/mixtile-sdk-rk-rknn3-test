@@ -269,9 +269,12 @@ int main(int argc, char **argv) {
     callback.embed_callback = embed_callback;
     callback.embed_userdata = &embedding_info;
 
-    strncpy(rknn_app_ctx.llm.system_prompt, system_prompt, strlen(system_prompt) - 1);
-    strncpy(rknn_app_ctx.llm.prefix_prompt, prompt_prefix, strlen(prompt_prefix) - 1);
-    strncpy(rknn_app_ctx.llm.postfix_prompt, prompt_postfix, strlen(prompt_postfix) - 1);
+    strncpy(rknn_app_ctx.llm.system_prompt, system_prompt, sizeof(rknn_app_ctx.llm.system_prompt) - 1);
+    rknn_app_ctx.llm.system_prompt[sizeof(rknn_app_ctx.llm.system_prompt) - 1] = '\0';
+    strncpy(rknn_app_ctx.llm.prefix_prompt, prompt_prefix, sizeof(rknn_app_ctx.llm.prefix_prompt) - 1);
+    rknn_app_ctx.llm.prefix_prompt[sizeof(rknn_app_ctx.llm.prefix_prompt) - 1] = '\0';
+    strncpy(rknn_app_ctx.llm.postfix_prompt, prompt_postfix, sizeof(rknn_app_ctx.llm.postfix_prompt) - 1);
+    rknn_app_ctx.llm.postfix_prompt[sizeof(rknn_app_ctx.llm.postfix_prompt) - 1] = '\0';
 
     rknn_app_ctx.vision.model_width = pruned_model_width;
     rknn_app_ctx.vision.model_height = pruned_model_height;

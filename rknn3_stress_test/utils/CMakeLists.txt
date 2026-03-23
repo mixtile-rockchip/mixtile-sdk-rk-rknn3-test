@@ -34,6 +34,11 @@ if (TARGET_SOC STREQUAL "rk3588")
   add_definitions(-DLIBRGA_IM2D_HANDLE)
 endif()
 
+# Disable RGA on RK3572 due to hardware issues
+if (TARGET_SOC STREQUAL "rk3572")
+  add_definitions(-DDISABLE_RGA_ON_RK3572)
+endif()
+
 add_library(imageutils STATIC
   image_utils.c
 )

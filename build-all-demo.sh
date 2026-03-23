@@ -5,16 +5,18 @@ set -e
 # --- Default parameter Settings ---
 TARGET_SOC=""
 TARGET_ARCH=""
+TARGET_LIB_ARCH=""
 BUILD_TYPE="Release"
 ENABLE_ASAN=OFF
 DISABLE_RGA=OFF
 DISABLE_LIBJPEG=OFF
+SKIP_FIND_DEVICES=OFF
 
 # Only compile these tests when executing this script
 DEMO_LIST=("rknn3_cnn_test" "rknn3_llm_test" "rknn3_vlm_test" "rknn3_audio_encoder_test")
 
 echo "$0 $@"
-while getopts ":t:a:b:m:r:j:g:" opt; do
+while getopts ":t:a:b:m:r:j:g:s" opt; do
   case $opt in
     t) TARGET_SOC=$OPTARG ;;
     a) TARGET_ARCH=$OPTARG ;;
@@ -23,6 +25,7 @@ while getopts ":t:a:b:m:r:j:g:" opt; do
     r) DISABLE_RGA=ON ;;
     j) DISABLE_LIBJPEG=ON ;;
     g) GCC_COMPILER=$OPTARG ;;
+    s) SKIP_FIND_DEVICES=ON ;;
     ?) echo "Invalid option: -$OPTARG"; exit 1 ;;
   esac
 done
@@ -58,7 +61,8 @@ fi
 
 ROOT_PWD=$( cd "$( dirname $0 )" && pwd )
 # Modify the installation root directory: Consolidate it under the same install/ platform name
-FINAL_INSTALL_DIR=${ROOT_PWD}/install/aicp_test_${TARGET_ARCH}
+# Add chip name to distinguish different platforms
+FINAL_INSTALL_DIR=${ROOT_PWD}/install/aicp_test_${TARGET_SOC}_${TARGET_ARCH}
 
 echo "==========================================="
 echo "Start batch compilation: ${DEMO_LIST[*]}"
@@ -105,6 +109,7 @@ do
         -DENABLE_ASAN=${ENABLE_ASAN} \
         -DDISABLE_RGA=${DISABLE_RGA} \
         -DDISABLE_LIBJPEG=${DISABLE_LIBJPEG} \
+        -DSKIP_FIND_DEVICES=${SKIP_FIND_DEVICES} \
         -DCMAKE_INSTALL_PREFIX=${FINAL_INSTALL_DIR}
 
     make -j$(nproc)

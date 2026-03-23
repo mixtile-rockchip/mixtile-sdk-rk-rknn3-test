@@ -60,6 +60,7 @@ int init_rknn3_vlm_vision(rknn3_vlm_vision_context *vision_ctx, const char *mode
     // 获取目前连接的RK182X信息
     rknn3_devices rknn3_devices;
     memset(&rknn3_devices, 0, sizeof(rknn3_devices));
+#ifndef SKIP_FIND_DEVICES
     ret = rknn3_find_devices(&rknn3_devices);
     if (ret != RKNN3_SUCCESS || rknn3_devices.n_devices <= 0) {
         printf("find devices failed, or data is invalid: %d\n", ret);
@@ -72,9 +73,16 @@ int init_rknn3_vlm_vision(rknn3_vlm_vision_context *vision_ctx, const char *mode
     }
 
     printf("[rknn3_stress_test_log] device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
+#else
+    printf("[rknn3_stress_test_log] SKIP_FIND_DEVICES enabled, skip rknn3_find_devices\n");
+#endif
 
     rknn3_init_extend init_extend = { 0 };
+#ifndef SKIP_FIND_DEVICES
     init_extend.device_id = rknn3_devices.devices[device_id].id;
+#else
+    init_extend.device_id = NULL;
+#endif
 
     // RKNN Init
     ret = rknn3_init(&ctx, &init_extend);
