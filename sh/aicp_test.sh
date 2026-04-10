@@ -129,6 +129,9 @@ SELECTED_DEVICE=""
 MODEL_PATHS=()
 RETURN_TO_MAIN_MENU=false  # Flag to indicate if we should return to main menu
 
+# Device info arrays
+declare -A DEVICE_COMM_MODES  # Store communication mode for each device (key: device_id, value: comm_mode)
+
 # Task status enum
 TASK_STATUS_RUNNING="RUNNING"
 TASK_STATUS_SUCCESS="SUCCESS"
@@ -228,7 +231,32 @@ enumerate_devices() {
         return 1
     fi
 
+    # Parse communication mode for each device
+    DEVICE_COMM_MODES=()
+    local current_device_id=""
+    while IFS= read -r line; do
+        # Check for Device ID line
+        if echo "$line" | grep -q "Device ID[[:space:]]*:"; then
+            current_device_id=$(echo "$line" | grep -o "Device ID[[:space:]]*:[[:space:]]*[0-9]*" | grep -o "[0-9]*")
+        fi
+        # Check for Communication mode line
+        if [[ -n "$current_device_id" ]] && echo "$line" | grep -q "Communication mode[[:space:]]*:"; then
+            local comm_mode=$(echo "$line" | sed 's/.*Communication mode[[:space:]]*:[[:space:]]*//' | tr -d '[:space:]')
+            DEVICE_COMM_MODES["$current_device_id"]="$comm_mode"
+            # Also store in DEVICE_CONFIGS for use in test execution
+            store_device_config "$current_device_id" "comm_mode" "$comm_mode"
+            current_device_id=""  # Reset for next device
+        fi
+    done <<< "$output"
+
     return 0
+}
+
+# Function to get device communication mode
+# Usage: get_device_comm_mode <device_id>
+get_device_comm_mode() {
+    local device_id="$1"
+    echo "${DEVICE_COMM_MODES[$device_id]:-UNKNOWN}"
 }
 
 # Function to display device information
@@ -376,6 +404,7 @@ execute_test_in_background() {
         local custom_test_params=""
         local reset_loop_count=""
         local total_traversal_models=""
+        local comm_mode=""
 
         # Validate temp_config_file path to prevent path traversal
         if [[ -n "$temp_config_file" && -f "$temp_config_file" ]]; then
@@ -394,6 +423,7 @@ execute_test_in_background() {
                     "custom_test_params") custom_test_params="$config_value" ;;
                     "reset_loop_count") reset_loop_count="$config_value" ;;
                     "total_traversal_models") total_traversal_models="$config_value" ;;
+                    "comm_mode") comm_mode="$config_value" ;;
                 esac
             done < "$temp_config_file"
         fi
@@ -403,6 +433,7 @@ execute_test_in_background() {
                 # Handle model testing
                 if [[ -n "$model_category" && -n "$test_type" ]]; then
                     echo "Executing model test on Device $device_id:"
+                    echo "  - Communication Mode: ${comm_mode:-UNKNOWN}"
                     echo "  - Test Category: $test_category"
                     echo "  - Model Category: $model_category"
                     echo "  - Test Type: $test_type"
@@ -619,6 +650,7 @@ execute_test_in_background() {
                 # Handle SMI testing
                 if [[ -n "$smi_test_type" ]]; then
                     echo "Executing SMI test on Device $device_id:"
+                    echo "  - Communication Mode: ${comm_mode:-UNKNOWN}"
                     echo "  - Test Category: $test_category"
                     echo "  - SMI Test Type: $smi_test_type"
 
@@ -728,6 +760,16 @@ update_task_statuses() {
                 # Set longer interval for Model Traversal Test
                 if [[ "$test_type" == "Model Traversal Test" ]]; then
                     check_interval=180
+                fi
+
+                # Add extra timeout for NET communication mode (network latency)
+                local comm_mode=$(get_device_comm_mode "$device_id")
+                if [[ "$comm_mode" =~ ^[Nn][Ee][Tt]$ ]]; then
+                    if [[ "$test_type" == "Model Traversal Test" ]]; then
+                        check_interval=$((check_interval + 360))
+                    else
+                        check_interval=$((check_interval + 180))
+                    fi
                 fi
             fi
 
@@ -898,6 +940,7 @@ load_smi_module() {
 # Second Level Menu: Device-specific submenu
 device_submenu() {
     local device_id="$1"
+    local comm_mode=$(get_device_comm_mode "$device_id")
 
     # Load required modules
     load_rknn_module
@@ -905,8 +948,9 @@ device_submenu() {
 
     while true; do
         show_main_header
-        echo -e "${CYAN}Device $device_id Menu${NC}"
+        echo "Device $device_id Menu"
         echo "Selected Device: $device_id"
+        echo "Communication Mode: $comm_mode"
         echo
         echo "1. Model Testing"
         echo "2. SMI Testing"
@@ -994,11 +1038,12 @@ display_configurations() {
         smi_test_type=$(get_device_config "$i" "smi_test_type")
         reset_loop_count=$(get_device_config "$i" "reset_loop_count")
         total_traversal_models=$(get_device_config "$i" "total_traversal_models")
+        comm_mode=$(get_device_comm_mode "$i")
 
         # Display configurations if any exist for this device
         if [[ -n "$test_category" || -n "$model_category" || -n "$specific_model" || -n "$test_type" || -n "$smi_test_type" ]]; then
             has_configs=true
-            echo "Device $i:"
+            echo "Device $i (${GREEN}Comm Mode: ${comm_mode}${NC}):"
 
             # Validate device id
             if [[ ! "$i" =~ ^[0-9]+$ ]]; then
@@ -1082,11 +1127,14 @@ main_menu() {
         if [ $DEVICE_COUNT -gt 0 ]; then
             echo "Detected $DEVICE_COUNT device(s)"
             echo
-
-            # Display available devices
+            echo "ID   Communication Mode"
+            echo "---- --------------------"
+            # Display available devices with communication mode
             for ((i=0; i<DEVICE_COUNT; i++)); do
-                echo "$((i+1)). Device $i"
+                local comm_mode=$(get_device_comm_mode "$i")
+                printf "%-4s %-20s\n" "$((i+1))." "$comm_mode"
             done
+            echo
         else
             echo -e "${YELLOW}No devices detected!${NC}"
             echo "1. Rescan for devices"
