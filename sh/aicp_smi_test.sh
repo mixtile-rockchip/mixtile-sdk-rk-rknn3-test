@@ -464,6 +464,192 @@ reboot_test() {
     return $((failed_reboots > 0 ? 1 : 0))
 }
 
+# Sleep wake-up test for specific device with duration parameter
+sleep_wakeup_test() {
+    local device_id="$1"
+    local test_hours="${2:-1}"  # Default to 1 hour if not specified
+
+    echo -e "${CYAN}=== Starting Sleep Wake-up Test for Device $device_id ===${NC}"
+    # Force flush - print a large amount of text to trigger buffer flush
+    echo "================================================================"
+    echo "Sleep wake-up test will run for $test_hours hour(s)"
+    echo "Testing suspend and wakeup functionality continuously"
+    echo "================================================================"
+    echo
+
+    # Validate inputs
+    if [[ ! "$test_hours" =~ ^[0-9]+$ ]] || [[ "$test_hours" -lt 1 ]]; then
+        echo -e "${RED}Error: Test hours must be a positive integer${NC}"
+        return 1
+    fi
+
+    # Check if required commands exist
+    if ! command -v rknn-smi &> /dev/null; then
+        echo -e "${RED}rknn-smi command not found${NC}"
+        return 1
+    fi
+
+    # Calculate test duration in seconds
+    local test_duration_seconds=$((test_hours * 3600))
+    echo -e "${YELLOW}Sleep wake-up test will run for $test_hours hour(s) ($test_duration_seconds seconds) for device $device_id${NC}"
+    echo
+    # Force flush with more output
+    for i in {1..20}; do echo "========================================"; done
+
+    local successful_cycles=0
+    local failed_cycles=0
+    local start_time
+    start_time=$(date +%s)
+    local current_iteration=0
+    local test_stopped_for_failure=false  # Track if test stopped due to failure
+
+    # Retry settings
+    local max_retries=3      # Max retries when output is empty/unclear
+    local retry_delay=2      # Seconds to wait between retries
+
+    echo -e "${GREEN}Starting sleep wake-up test sequence...${NC}"
+    echo -e "${YELLOW}Press Ctrl+C to stop the test at any time${NC}"
+    echo -e "${YELLOW}Test will retry up to $max_retries times if output is unclear${NC}"
+    echo -e "${RED}Test will stop immediately if 'failed' appears in output${NC}"
+    echo
+    # More flush padding
+    for i in {1..10}; do echo "."; done
+
+    # Capture both SIGINT and SIGTERM for graceful shutdown
+    trap 'echo -e "\n${YELLOW}Test interrupted by signal${NC}"; break' INT TERM
+
+    # Helper function to execute command with retry
+    execute_with_retry() {
+        local cmd="$1"
+        local operation="$2"  # "suspend" or "wakeup"
+        local retry_count=0
+        local output=""
+        local result=""
+
+        while [[ $retry_count -lt $max_retries ]]; do
+            output=$(eval "$cmd" 2>&1)
+
+            # Check for "failed" in output - immediate failure, no retry
+            if echo "$output" | grep -qi "failed"; then
+                result="FAILED"
+                echo "   Output: $output"
+                return 1
+            # Check for "Successfully" in output - success
+            elif echo "$output" | grep -qi "Successfully"; then
+                result="SUCCESS"
+                echo "   Output: $output"
+                return 0
+            # Output is empty or unclear - retry
+            else
+                ((retry_count++))
+                if [[ $retry_count -lt $max_retries ]]; then
+                    echo "   Output: $output (empty/unclear, retrying...)"
+                    echo -e "${YELLOW}   $operation output unclear, waiting $retry_delay seconds and retrying ($retry_count/$max_retries)${NC}"
+                    sleep $retry_delay
+                else
+                    echo "   Output: $output"
+                    echo -e "${RED}   $operation FAILED after $max_retries retries (no valid output)${NC}"
+                    result="FAILED"
+                    return 1
+                fi
+            fi
+        done
+
+        return 1
+    }
+
+    # Main loop - run until time expires or failure detected
+    while true; do
+        ((current_iteration++))
+
+        local current_time
+        current_time=$(date +%s)
+        local elapsed_time=$((current_time - start_time))
+
+        # Check if test duration has been reached
+        if [[ $elapsed_time -ge $test_duration_seconds ]]; then
+            echo -e "${GREEN}Test duration of $test_hours hour(s) reached. Ending test.${NC}"
+            break
+        fi
+
+        local remaining_time=$((test_duration_seconds - elapsed_time))
+        local remaining_hours=$((remaining_time / 3600))
+        local remaining_minutes=$(( (remaining_time % 3600) / 60 ))
+        local remaining_seconds=$((remaining_time % 60))
+
+        echo -e "${BLUE}=== Sleep Wake-up Test Iteration $current_iteration ===${NC}"
+        echo -e "${YELLOW}Elapsed: ${elapsed_time}s | Remaining: ${remaining_hours}h ${remaining_minutes}m ${remaining_seconds}s${NC}"
+
+        # Step 1: Suspend device with retry
+        echo -e "${GREEN}1. Executing suspend for device $device_id: rknn-smi suspend${NC}"
+        if execute_with_retry "rknn-smi suspend" "Suspend"; then
+            echo -e "${GREEN}   Suspend successful${NC}"
+        else
+            echo -e "${RED}   Suspend FAILED${NC}"
+            ((failed_cycles++))
+            test_stopped_for_failure=true
+            break
+        fi
+
+        # Step 2: Sleep for a short interval
+        echo -e "${GREEN}2. Waiting for 2 seconds...${NC}"
+        sleep 2
+
+        # Step 3: Wakeup device with retry
+        echo -e "${GREEN}3. Executing wakeup for device $device_id: rknn-smi wakeup${NC}"
+        if execute_with_retry "rknn-smi wakeup" "Wakeup"; then
+            echo -e "${GREEN}   Wakeup successful${NC}"
+            ((successful_cycles++))
+        else
+            echo -e "${RED}   Wakeup FAILED${NC}"
+            ((failed_cycles++))
+            test_stopped_for_failure=true
+            break
+        fi
+
+        # Step 4: Short wait before next cycle
+        echo -e "${GREEN}4. Waiting 3 seconds before next cycle...${NC}"
+        sleep 3
+
+        # Heartbeat output to keep log file growing and prevent stuck detection
+        echo -e "${CYAN}[Heartbeat] Iteration $current_iteration done, test continuing...${NC}"
+        echo "........................................"
+        echo
+    done
+
+    # Reset signal capture
+    trap - INT TERM
+
+    # Display test summary
+    echo
+    echo -e "${CYAN}=== Sleep Wake-up Test Summary for Device $device_id ===${NC}"
+    echo -e "Test duration: $test_hours hour(s)"
+    echo -e "Total iterations: $current_iteration"
+    echo -e "${GREEN}Successful cycles: $successful_cycles${NC}"
+    echo -e "${RED}Failed cycles: $failed_cycles${NC}"
+
+    # Determine final status
+    local exit_code=0
+
+    if [[ $failed_cycles -gt 0 ]]; then
+        exit_code=1
+        echo -e "${RED}Test result: FAILED (detected failures during test)${NC}"
+    elif [[ "$test_stopped_for_failure" == "true" ]]; then
+        exit_code=1
+        echo -e "${RED}Test result: FAILED (test stopped due to failure detection)${NC}"
+    else
+        echo -e "${GREEN}Test result: SUCCESS (all tests passed)${NC}"
+    fi
+
+    # Final verification with more padding
+    echo
+    echo "Final system status:"
+    rknn-smi info -d "$device_id" | head -10
+    for i in {1..10}; do echo "========================================"; done
+
+    return $exit_code
+}
+
 # Hardware reset test for specific device with parameters
 hardware_reset_test() {
     local device_id="$1"
@@ -698,10 +884,11 @@ rknn_smi_test_menu() {
         echo "========================================"
         echo "1. Run Comprehensive RKNN-SMI Test"
         echo "2. Reboot Test"
-        echo "3. Return to Main Menu"
+        echo "3. Sleep Wake-up Test"
+        echo "4. Return to Main Menu"
         echo
 
-        read -p "Please select an option (1-3): " choice
+        read -p "Please select an option (1-4): " choice
 
         case $choice in
             1)
@@ -717,10 +904,25 @@ rknn_smi_test_menu() {
                 read -p "Press Enter to continue..."
                 ;;
             3)
+                echo -e "${YELLOW}Starting Sleep Wake-up Test...${NC}"
+                # Ask for test duration in hours
+                local test_hours
+                read -p "Enter test duration in hours (default: 1): " test_hours
+                if [[ -z "$test_hours" ]]; then
+                    test_hours=1
+                elif [[ ! "$test_hours" =~ ^[0-9]+$ ]] || [[ "$test_hours" -lt 1 ]]; then
+                    echo "Invalid input. Defaulting to 1 hour."
+                    test_hours=1
+                fi
+                sleep_wakeup_test 0 "$test_hours"
+                echo
+                read -p "Press Enter to continue..."
+                ;;
+            4)
                 return
                 ;;
             *)
-                echo -e "${RED}Invalid selection, please enter 1-3${NC}"
+                echo -e "${RED}Invalid selection, please enter 1-4${NC}"
                 echo
                 read -p "Press Enter to continue..."
                 ;;
@@ -749,10 +951,11 @@ record_smi_config() {
     echo "Select SMI test type for device $device_id:"
     echo "1. Comprehensive SMI Test (Information Query and Settings)"
     echo "2. Reset Test"
-    echo "3. Back to Device Menu"
+    echo "3. Sleep Wake-up Test"
+    echo "4. Back to Device Menu"
     echo
 
-    read -rp "Please select a test type (1-3): " choice
+    read -rp "Please select a test type (1-4): " choice
 
     case $choice in
         1)
@@ -790,11 +993,36 @@ record_smi_config() {
             return
             ;;
         3)
+            # Record the sleep wake-up test configuration - NO ACTUAL TEST EXECUTION HERE
+            store_device_config "$device_id" "test_category" "SMI Testing"
+            store_device_config "$device_id" "smi_test_type" "Sleep Wake-up Test"
+
+            # Ask for test duration in hours
+            read -rp "Enter test duration in hours (default: 1): " sleep_wakeup_hours
+            if [[ -z "$sleep_wakeup_hours" ]]; then
+                echo "No input. Defaulting to 1 hour."
+                sleep_wakeup_hours=1
+            elif [[ ! "$sleep_wakeup_hours" =~ ^[0-9]+$ ]] || [[ "$sleep_wakeup_hours" -lt 1 ]]; then
+                echo "Invalid input. Defaulting to 1 hour."
+                sleep_wakeup_hours=1
+            fi
+
+            # Store the sleep wake-up configuration
+            store_device_config "$device_id" "sleep_wakeup_hours" "$sleep_wakeup_hours"
+
+            # Inform user that test is scheduled but not executed yet
+            echo "Sleep wake-up test scheduled for device $device_id with $sleep_wakeup_hours hour(s)."
+            echo "Will be executed during 'Start Testing Process'."
+            read -rp "Press Enter to return to main menu..." dummy
+            RETURN_TO_MAIN_MENU=true
+            return
+            ;;
+        4)
             # User wants to go back to device menu
             return
             ;;
         *)
-            echo -e "${RED}Invalid selection, please enter 1-3${NC}"
+            echo -e "${RED}Invalid selection, please enter 1-4${NC}"
             wait_for_user
             ;;
     esac

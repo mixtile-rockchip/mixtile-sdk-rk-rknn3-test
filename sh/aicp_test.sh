@@ -312,16 +312,34 @@ add_task() {
     local config_type="$3"
     local log_file="$4"
 
+    # Validate inputs
+    if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+        echo "Error: Invalid PID: $pid" >&2
+        return 1
+    fi
+
     TASK_PIDS+=("$pid")
     TASK_DEVICE_IDS+=("$device_id")
     TASK_STATUSES+=("$TASK_STATUS_RUNNING")
-    TASK_START_TIMES+=($(date +%s))
+
+    # Capture start time with validation
+    local task_start_time
+    task_start_time=$(date +%s)
+
+    # Validate the captured time is reasonable (should be > 1600000000, after year 2020)
+    if [[ ! "$task_start_time" =~ ^[0-9]+$ ]] || [[ "$task_start_time" -lt 1600000000 ]]; then
+        echo "Warning: Invalid start_time captured: $task_start_time, using fallback" >&2
+        task_start_time=$(date +%s)
+    fi
+
+    TASK_START_TIMES+=("$task_start_time")
+
     TASK_CONFIG_TYPES+=("$config_type")
     TASK_LOG_FILES+=("${log_file:-./test_results/task_${device_id}_$(date +%s%N).log}")
 
-    # Initialize log size tracking
+    # Initialize log size tracking with same start time for consistency
     TASK_PREV_LOG_SIZES+=(0)
-    TASK_LAST_UPDATE_TIMES+=($(date +%s))
+    TASK_LAST_UPDATE_TIMES+=("$task_start_time")
 }
 
 # Function to update task status
@@ -403,6 +421,7 @@ execute_test_in_background() {
         local stress_test_hours=""
         local custom_test_params=""
         local reset_loop_count=""
+        local sleep_wakeup_hours=""
         local total_traversal_models=""
         local comm_mode=""
 
@@ -422,6 +441,7 @@ execute_test_in_background() {
                     "stress_test_hours") stress_test_hours="$config_value" ;;
                     "custom_test_params") custom_test_params="$config_value" ;;
                     "reset_loop_count") reset_loop_count="$config_value" ;;
+                    "sleep_wakeup_hours") sleep_wakeup_hours="$config_value" ;;
                     "total_traversal_models") total_traversal_models="$config_value" ;;
                     "comm_mode") comm_mode="$config_value" ;;
                 esac
@@ -666,11 +686,10 @@ execute_test_in_background() {
                         "Comprehensive SMI Test")
                             if command -v rknn_smi_test_for_device &> /dev/null; then
                                 rknn_smi_test_for_device "$device_id"
+                                exit_code=$?  # Capture return value
                             else
                                 echo "Comprehensive SMI test function not available"
-                                # Fallback: basic info display
-                                echo "Basic info for device $device_id:"
-                                rknn-smi info -d "$device_id"
+                                exit_code=1
                             fi
                             ;;
                         "Reset Test")
@@ -681,11 +700,24 @@ execute_test_in_background() {
 
                             if command -v hardware_reset_test &> /dev/null; then
                                 hardware_reset_test "$device_id" "$loop_count" "hw"
+                                exit_code=$?  # Capture return value
                             else
                                 echo "Reset test function not available"
-                                # Fallback: basic reset
-                                echo "Attempting basic reset for device $device_id..."
-                                rknn-smi reset -d $device_id -t hw
+                                exit_code=1
+                            fi
+                            ;;
+                        "Sleep Wake-up Test")
+                            local test_hours="$sleep_wakeup_hours"
+                            if [[ -z "$test_hours" ]]; then
+                                test_hours=1
+                            fi
+
+                            if command -v sleep_wakeup_test &> /dev/null; then
+                                sleep_wakeup_test "$device_id" "$test_hours"
+                                exit_code=$?  # Capture return value
+                            else
+                                echo "Sleep wake-up test function not available"
+                                exit_code=1
                             fi
                             ;;
                         *)
@@ -771,6 +803,21 @@ update_task_statuses() {
                         check_interval=$((check_interval + 180))
                     fi
                 fi
+            elif [[ "${TASK_CONFIG_TYPES[$i]}" == "SMI Testing" ]]; then
+                local device_id="${TASK_DEVICE_IDS[$i]}"
+
+                # Validate device_id
+                if [[ ! "$device_id" =~ ^[0-9]+$ ]]; then
+                    echo "Warning: Invalid device ID in task: $device_id" >&2
+                    continue
+                fi
+
+                local smi_test_type=$(get_device_config "$device_id" "smi_test_type")
+
+                # Set shorter interval for Sleep Wake-up Test for more responsive monitoring
+                if [[ "$smi_test_type" == "Sleep Wake-up Test" ]]; then
+                    check_interval=10
+                fi
             fi
 
             # If it's been at least the check interval seconds since last check
@@ -800,13 +847,23 @@ update_task_statuses() {
             fi
         else
             # Process has finished, check exit code
-            local exit_code
-            exit_code=$(wait "$pid" 2>/dev/null; echo $?)
+            # Only check exit code if status is still RUNNING (not already updated)
+            if [[ "${TASK_STATUSES[$i]}" == "$TASK_STATUS_RUNNING" ]]; then
+                local exit_code
+                exit_code=$(wait "$pid" 2>/dev/null; echo $?)
 
-            if [[ $exit_code -eq 0 ]]; then
-                update_task_status $i "$TASK_STATUS_SUCCESS"
-            else
-                update_task_status $i "$TASK_STATUS_FAILED"
+                # Handle case where wait returns 127 (process not found)
+                # This can happen if process was already reaped
+                if [[ $exit_code -eq 127 ]]; then
+                    # Process was likely killed by stuck detection, treat as failed
+                    exit_code=1
+                fi
+
+                if [[ $exit_code -eq 0 ]]; then
+                    update_task_status $i "$TASK_STATUS_SUCCESS"
+                else
+                    update_task_status $i "$TASK_STATUS_FAILED"
+                fi
             fi
         fi
     done
@@ -822,12 +879,29 @@ print_status_table() {
     printf "%-8s %-12s %-20s %-10s %-15s\n" "Task ID" "Device ID" "Config Type" "Status" "Run Time(s)"
     printf "%-8s %-12s %-20s %-10s %-15s\n" "-------" "---------" "-----------" "------" "---------"
 
+    local current_time
+    current_time=$(date +%s)
+
     for i in "${!TASK_PIDS[@]}"; do
         local device_id="${TASK_DEVICE_IDS[$i]}"
         local config_type="${TASK_CONFIG_TYPES[$i]}"
         local status="${TASK_STATUSES[$i]}"
-        local start_time="${TASK_START_TIMES[$i]}"
-        local elapsed_time=$(($(date +%s) - start_time))
+
+        # Get start_time with safe array access
+        local start_time=""
+        if [[ $i -lt ${#TASK_START_TIMES[@]} ]]; then
+            start_time="${TASK_START_TIMES[$i]}"
+        fi
+
+        # Calculate elapsed time with validation
+        local elapsed_time="N/A"
+        if [[ -n "$start_time" && "$start_time" =~ ^[0-9]+$ && "$current_time" =~ ^[0-9]+$ ]]; then
+            local calculated=$((current_time - start_time))
+            # Sanity check: elapsed time should be positive and reasonable (< 1 year)
+            if [[ $calculated -ge 0 && $calculated -lt 31536000 ]]; then
+                elapsed_time=$calculated
+            fi
+        fi
 
         printf "%-8s %-12s %-20s %-10s %-15s\n" "$i" "$device_id" "$config_type" "$status" "$elapsed_time"
     done
@@ -1037,6 +1111,7 @@ display_configurations() {
         custom_test_params=$(get_device_config "$i" "custom_test_params")
         smi_test_type=$(get_device_config "$i" "smi_test_type")
         reset_loop_count=$(get_device_config "$i" "reset_loop_count")
+        sleep_wakeup_hours=$(get_device_config "$i" "sleep_wakeup_hours")
         total_traversal_models=$(get_device_config "$i" "total_traversal_models")
         comm_mode=$(get_device_comm_mode "$i")
 
@@ -1100,7 +1175,8 @@ display_configurations() {
 
             # Display SMI testing configurations if they exist
             [[ -n "$smi_test_type" ]] && echo "  - SMI Test Type: $smi_test_type"
-            [[ -n "$reset_loop_count" && -n "$smi_test_type" ]] && echo "  - Reset Loop Count: $reset_loop_count"
+            [[ -n "$reset_loop_count" && -n "$smi_test_type" && "$smi_test_type" == "Reset Test" ]] && echo "  - Reset Loop Count: $reset_loop_count"
+            [[ -n "$sleep_wakeup_hours" && -n "$smi_test_type" && "$smi_test_type" == "Sleep Wake-up Test" ]] && echo "  - Sleep Wake-up Hours: $sleep_wakeup_hours"
 
             echo
         fi
