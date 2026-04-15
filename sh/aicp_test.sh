@@ -423,6 +423,7 @@ execute_test_in_background() {
         local reset_loop_count=""
         local sleep_wakeup_hours=""
         local total_traversal_models=""
+        local traversal_loop_count=""
         local comm_mode=""
 
         # Validate temp_config_file path to prevent path traversal
@@ -443,6 +444,7 @@ execute_test_in_background() {
                     "reset_loop_count") reset_loop_count="$config_value" ;;
                     "sleep_wakeup_hours") sleep_wakeup_hours="$config_value" ;;
                     "total_traversal_models") total_traversal_models="$config_value" ;;
+                    "traversal_loop_count") traversal_loop_count="$config_value" ;;
                     "comm_mode") comm_mode="$config_value" ;;
                 esac
             done < "$temp_config_file"
@@ -585,73 +587,88 @@ execute_test_in_background() {
                             # Handle model traversal test - iterate through all model types and their directories
                             echo "Executing Model Traversal Test for Device $device_id"
 
+                            # Get loop count from config, default to 1 if not set
+                            local loop_count="${traversal_loop_count:-1}"
+                            echo "Total loop count: $loop_count"
+
                             local model_types=("cnn" "llm" "vlm")
                             local model_type_names=("CNN" "LLM" "VLM")
                             local overall_success=0  # Track overall success (0 = success, 1 = failure)
 
-                            # Iterate through each model type directory
-                            for i in "${!model_types[@]}"; do
-                                local model_type_dir="${model_types[$i]}"
-                                local model_type_name="${model_type_names[$i]}"
+                            # Outer loop for multiple iterations
+                            for ((loop_idx=1; loop_idx<=loop_count; loop_idx++)); do
+                                echo ""
+                                echo "========== Loop $loop_idx of $loop_count =========="
+                                echo ""
 
-                                local demo_executable="rknn3_${model_types[$i]}_demo"
+                                # Iterate through each model type directory
+                                for i in "${!model_types[@]}"; do
+                                    local model_type_dir="${model_types[$i]}"
+                                    local model_type_name="${model_type_names[$i]}"
 
-                                # Validate model_type_dir to prevent path traversal
-                                if [[ "$model_type_dir" =~ [^a-zA-Z0-9_.-] ]]; then
-                                    echo "Warning: Invalid model type directory name: $model_type_dir, skipping..."
-                                    continue
-                                fi
+                                    local demo_executable="rknn3_${model_types[$i]}_demo"
 
-                                # Check if demo executable exists
-                                if ! command -v "$demo_executable" &> /dev/null; then
-                                    echo "Warning: $demo_executable is not available in PATH, skipping $model_type_name models"
-                                    continue
-                                fi
+                                    # Validate model_type_dir to prevent path traversal
+                                    if [[ "$model_type_dir" =~ [^a-zA-Z0-9_.-] ]]; then
+                                        echo "Warning: Invalid model type directory name: $model_type_dir, skipping..."
+                                        continue
+                                    fi
 
-                                # Validate and check if the model directory exists
-                                local model_base_dir="../$model_type_dir"
-                                if [[ "$model_base_dir" =~ [^a-zA-Z0-9/_.-] ]]; then
-                                    echo "Warning: Invalid model base directory path: $model_base_dir, skipping..."
-                                    continue
-                                fi
+                                    # Check if demo executable exists
+                                    if ! command -v "$demo_executable" &> /dev/null; then
+                                        echo "Warning: $demo_executable is not available in PATH, skipping $model_type_name models"
+                                        continue
+                                    fi
 
-                                # Check if the model directory exists
-                                if [[ -d "$model_base_dir" ]]; then
-                                    echo "Scanning $model_type_name models in $model_base_dir/"
+                                    # Validate and check if the model directory exists
+                                    local model_base_dir="../$model_type_dir"
+                                    if [[ "$model_base_dir" =~ [^a-zA-Z0-9/_.-] ]]; then
+                                        echo "Warning: Invalid model base directory path: $model_base_dir, skipping..."
+                                        continue
+                                    fi
 
-                                    # Find all subdirectories in the model type directory
-                                    for model_dir in "$model_base_dir"/*/; do
-                                        # Validate model_dir to prevent path traversal
-                                        if [[ -d "$model_dir" ]]; then
-                                            local model_name=$(basename "$model_dir")
+                                    # Check if the model directory exists
+                                    if [[ -d "$model_base_dir" ]]; then
+                                        echo "Scanning $model_type_name models in $model_base_dir/"
 
-                                            # Validate model_name to prevent path traversal
-                                            if [[ "$model_name" =~ [^a-zA-Z0-9_.-] ]]; then
-                                                echo "Warning: Invalid model name: $model_name, skipping..."
-                                                continue
+                                        # Find all subdirectories in the model type directory
+                                        for model_dir in "$model_base_dir"/*/; do
+                                            # Validate model_dir to prevent path traversal
+                                            if [[ -d "$model_dir" ]]; then
+                                                local model_name=$(basename "$model_dir")
+
+                                                # Validate model_name to prevent path traversal
+                                                if [[ "$model_name" =~ [^a-zA-Z0-9_.-] ]]; then
+                                                    echo "Warning: Invalid model name: $model_name, skipping..."
+                                                    continue
+                                                fi
+
+                                                local full_model_path="$model_dir"
+
+                                                echo "Executing $demo_executable -f \"$full_model_path\" -id $device_id"
+
+                                                # Execute the model test
+                                                "$demo_executable" -f "$full_model_path" -id "$device_id"
+                                                local model_exit_code=$?
+
+                                                if [[ $model_exit_code -ne 0 ]]; then
+                                                    echo "Error: Model $model_name failed with exit code $model_exit_code"
+                                                    overall_success=1  # Mark overall failure
+                                                    # Continue testing other models but mark overall test as failed
+                                                else
+                                                    echo "Success: Model $model_name completed successfully"
+                                                fi
                                             fi
-
-                                            local full_model_path="$model_dir"
-
-                                            echo "Executing $demo_executable -f \"$full_model_path\" -id $device_id"
-
-                                            # Execute the model test
-                                            "$demo_executable" -f "$full_model_path" -id "$device_id"
-                                            local model_exit_code=$?
-
-                                            if [[ $model_exit_code -ne 0 ]]; then
-                                                echo "Error: Model $model_name failed with exit code $model_exit_code"
-                                                overall_success=1  # Mark overall failure
-                                                # Continue testing other models but mark overall test as failed
-                                            else
-                                                echo "Success: Model $model_name completed successfully"
-                                            fi
-                                        fi
-                                    done
-                                else
-                                    echo "Info: $model_base_dir/ directory does not exist, skipping $model_type_name models"
-                                fi
+                                        done
+                                    else
+                                        echo "Info: $model_base_dir/ directory does not exist, skipping $model_type_name models"
+                                    fi
+                                done
                             done
+
+                            echo ""
+                            echo "========== Traversal Test Completed ($loop_count loops) =========="
+                            echo ""
 
                             # Set exit code based on overall success
                             exit_code=$overall_success
@@ -1113,6 +1130,7 @@ display_configurations() {
         reset_loop_count=$(get_device_config "$i" "reset_loop_count")
         sleep_wakeup_hours=$(get_device_config "$i" "sleep_wakeup_hours")
         total_traversal_models=$(get_device_config "$i" "total_traversal_models")
+        traversal_loop_count=$(get_device_config "$i" "traversal_loop_count")
         comm_mode=$(get_device_comm_mode "$i")
 
         # Display configurations if any exist for this device
@@ -1134,6 +1152,13 @@ display_configurations() {
                 echo "  - Model Category: $model_category"
                 echo "  - Model Type: $model_type"
                 echo "  - Test Type: $test_type"
+
+                # Display loop count
+                if [[ -n "$traversal_loop_count" && "$traversal_loop_count" =~ ^[0-9]+$ ]]; then
+                    echo "  - Loop Count: $traversal_loop_count"
+                else
+                    echo "  - Loop Count: 1 (default)"
+                fi
 
                 # Display traversal test specific info
                 if [[ -n "$total_traversal_models" && "$total_traversal_models" -gt 0 ]]; then

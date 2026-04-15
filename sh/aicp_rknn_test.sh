@@ -523,12 +523,29 @@ perform_model_traversal_test() {
 
     echo
 
+    # Ask user for loop count
+    local loop_count
+    read -rp "Enter total loop count for traversal test (default: 1): " loop_count
+
+    if [[ -z "$loop_count" ]]; then
+        loop_count=1
+        echo "Using default loop count: 1"
+    elif [[ ! "$loop_count" =~ ^[0-9]+$ ]] || [[ "$loop_count" -lt 1 ]]; then
+        echo "Invalid input. Defaulting to 1 loop."
+        loop_count=1
+    else
+        echo "Loop count set to: $loop_count"
+    fi
+
+    echo
+
     # Store the test category and model traversal test type
     store_device_config "$device_id" "test_category" "Model Testing"
     store_device_config "$device_id" "model_category" "Model Traversal Test"
     store_device_config "$device_id" "model_type" "Traversal"
     store_device_config "$device_id" "test_type" "Model Traversal Test"
     store_device_config "$device_id" "total_traversal_models" "$total_models"
+    store_device_config "$device_id" "traversal_loop_count" "$loop_count"
 
     # Store each model that will be tested for display purposes
     for i in "${!all_found_models[@]}"; do
