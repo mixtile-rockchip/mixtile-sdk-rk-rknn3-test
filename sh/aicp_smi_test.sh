@@ -284,14 +284,64 @@ reboot_test() {
         return 1
     fi
 
-    if ! command -v rknn3_startup &> /dev/null; then
-        echo -e "${RED}rknn3_startup command not found${NC}"
+    # Get available devices
+    local devices=$(get_device_list)
+    if [ -z "$devices" ]; then
+        echo -e "${RED}No RKNN devices found${NC}"
         return 1
     fi
 
-    # Get number of loops - 修改为支持0表示无限循环
+    # Display available devices
+    echo -e "${YELLOW}Available devices:${NC}"
+    local device_array=()
+    local idx=0
+    for dev in $devices; do
+        device_array[$idx]=$dev
+        local comm_mode=$(rknn-smi info -t board -d "$dev" 2>/dev/null | grep "Communication mode" | sed 's/.*Communication mode[[:space:]]*:[[:space:]]*//' | tr -d '[:space:]')
+        echo "  $((idx+1)). Device ID: $dev (${comm_mode:-UNKNOWN})"
+        ((idx++))
+    done
+
+    # Ask user to select device
+    local device_choice
+    read -p "Select device to test (1-$idx): " device_choice
+    if [[ ! "$device_choice" =~ ^[0-9]+$ ]] || [[ "$device_choice" -lt 1 ]] || [[ "$device_choice" -gt $idx ]]; then
+        echo -e "${RED}Invalid device selection${NC}"
+        return 1
+    fi
+
+    local device_id="${device_array[$((device_choice-1))]}"
+
+    # Get device communication mode
+    local board_info=$(rknn-smi info -t board -d "$device_id" 2>/dev/null)
+    local comm_mode=""
+    local bus_addr_or_sn=""
+
+    if echo "$board_info" | grep -q "Communication mode"; then
+        comm_mode=$(echo "$board_info" | grep "Communication mode" | sed 's/.*Communication mode[[:space:]]*:[[:space:]]*//' | tr -d '[:space:]')
+    fi
+
+    # Get BusAddr/SN for proxy process identification
+    if [[ "$comm_mode" == "PCIe" ]]; then
+        if echo "$board_info" | grep -q "PCIe Bus Info"; then
+            bus_addr_or_sn=$(echo "$board_info" | grep "PCIe Bus Info" | sed 's/.*PCIe Bus Info[[:space:]]*:[[:space:]]*//' | tr -d '[:space:]')
+        fi
+    elif [[ "$comm_mode" == "USB" ]]; then
+        if echo "$board_info" | grep -q "Chip CPUID"; then
+            local full_cpuid=$(echo "$board_info" | grep "Chip CPUID" | sed 's/.*Chip CPUID[[:space:]]*:[[:space:]]*//' | tr -d '[:space:]')
+            bus_addr_or_sn="${full_cpuid:0:16}"
+        fi
+    fi
+
+    echo -e "${YELLOW}Device $device_id Communication Mode: ${comm_mode:-UNKNOWN}${NC}"
+    if [[ -n "$bus_addr_or_sn" ]]; then
+        echo -e "${YELLOW}Device BusAddr/SN: $bus_addr_or_sn${NC}"
+    fi
+    echo
+
+    # Get number of loops - support 0 for infinite loop and higher maximum
     while true; do
-        read -p "Enter number of reboot loops (0=infinite, 1-100): " loop_count
+        read -p "Enter number of reboot loops (0=infinite, 1-99999): " loop_count
         if [[ -z "$loop_count" ]]; then
             echo -e "${RED}Error: Input cannot be empty, please re-enter!${NC}"
             continue
@@ -307,10 +357,10 @@ reboot_test() {
         if [[ "$loop_count" -eq 0 ]]; then
             echo -e "${YELLOW}Infinite loop mode selected${NC}"
             break
-        elif [[ "$loop_count" -ge 1 && "$loop_count" -le 100 ]]; then
+        elif [[ "$loop_count" -ge 1 && "$loop_count" -le 99999 ]]; then
             break
         else
-            echo -e "${RED}Error: Please enter 0 for infinite loops or a number between 1-100!${NC}"
+            echo -e "${RED}Error: Please enter 0 for infinite loops or a number between 1-99999!${NC}"
         fi
     done
 
@@ -321,7 +371,7 @@ reboot_test() {
     fi
     echo
 
-    # 询问是否使用硬件重启
+    # Ask whether to use hardware reset
     while true; do
         read -p "Use hardware reset? (y/n): " use_hw_reset
         if [[ -z "$use_hw_reset" ]]; then
@@ -337,23 +387,25 @@ reboot_test() {
         fi
     done
 
-    # 根据用户选择设置重启类型（仅用于显示）
+    # Set reset type based on user selection
     if [[ "$use_hw_reset_lower" == "y" ]]; then
-        reset_type="hardware reset"
+        reset_type="hw"
+        reset_type_display="hardware reset"
     else
-        reset_type="normal reset"
+        reset_type=""
+        reset_type_display="normal reset"
     fi
 
-    echo -e "${GREEN}Selected reset type: $reset_type${NC}"
+    echo -e "${GREEN}Selected reset type: $reset_type_display${NC}"
     echo
 
     # Confirm test execution
     if [[ "$loop_count" -eq 0 ]]; then
-        echo -e "${RED}WARNING: This will reboot the RKNN device indefinitely until manually stopped!${NC}"
+        echo -e "${RED}WARNING: This will reboot device $device_id indefinitely until manually stopped!${NC}"
     else
-        echo -e "${RED}WARNING: This will reboot the RKNN device $loop_count times.${NC}"
+        echo -e "${RED}WARNING: This will reboot device $device_id $loop_count times.${NC}"
     fi
-    echo -e "${YELLOW}Reset type: $reset_type${NC}"
+    echo -e "${YELLOW}Reset type: $reset_type_display${NC}"
 
     read -p "Continue? (y/n): " confirm_choice
 
@@ -372,7 +424,7 @@ reboot_test() {
 
     trap 'echo -e "\n${YELLOW}Test interrupted by user${NC}"; break' INT
 
-    # 主循环
+    # Main loop
     while true; do
         ((current_iteration++))
         if [[ "$loop_count" -ne 0 ]] && [[ "$current_iteration" -gt "$loop_count" ]]; then
@@ -380,45 +432,66 @@ reboot_test() {
         fi
 
         if [[ "$loop_count" -eq 0 ]]; then
-            echo -e "${BLUE}=== Reboot Test Iteration $current_iteration (Infinite Mode) ===${NC}"
+            echo -e "${BLUE}=== Reboot Test Iteration $current_iteration (Infinite Mode) for Device $device_id ===${NC}"
         else
-            echo -e "${BLUE}=== Reboot Test Iteration $current_iteration of $loop_count ===${NC}"
+            echo -e "${BLUE}=== Reboot Test Iteration $current_iteration of $loop_count for Device $device_id ===${NC}"
         fi
 
-        # The background program of npu needs to be closed first
-        pkill -f "rknn3_transfer_proxy"
+        # Step 1: Clean up processes (per documentation)
+        echo -e "${GREEN}1. Cleaning up processes for device $device_id...${NC}"
+        killall rknn3_llm_demo 2>/dev/null || true
+        killall rknn3_cnn_demo 2>/dev/null || true
+        killall rknn3_vlm_demo 2>/dev/null || true
 
-        # Step 1: Reset
-        echo -e "${GREEN}1. Executing $reset_type...${NC}"
-        if [[ "$use_hw_reset_lower" == "y" ]]; then
-            rknn-smi reset -t hw 2>/dev/null
+        if [[ -n "$bus_addr_or_sn" ]]; then
+            echo -e "${YELLOW}   Killing proxy process (BusAddr/SN: $bus_addr_or_sn)...${NC}"
+            pkill -f "rknn3_transfer_proxy.*-s.*$bus_addr_or_sn" 2>/dev/null || true
         else
-            rknn-smi reset 2>/dev/null
+            pkill -f "rknn3_transfer_proxy" 2>/dev/null || true
+        fi
+        sleep 1
+
+        # Step 2: Reset
+        echo -e "${GREEN}2. Executing $reset_type_display for device $device_id...${NC}"
+        if [[ "$reset_type" == "hw" ]]; then
+            rknn-smi reset -t hw -d "$device_id" 2>/dev/null
+        else
+            rknn-smi reset -d "$device_id" 2>/dev/null
         fi
 
-        # Step 2: Sleep for 1 second
-        echo -e "${GREEN}2. Waiting for 1 second...${NC}"
+        # Step 3: Sleep for device to stabilize
+        echo -e "${GREEN}3. Waiting for device to stabilize (2 seconds)...${NC}"
         sleep 2
 
-        # Step 3: Restart rknn3 startup
-        echo -e "${GREEN}3. Restarting rknn3 startup: rknn3_startup restart${NC}"
-        rknn3_startup restart 2>/dev/null
+        # Step 4: Service recovery (per documentation)
+        echo -e "${GREEN}4. Service recovery...${NC}"
+        if [[ "$comm_mode" == "PCIe" ]]; then
+            echo -e "${YELLOW}   PCIe mode: executing rknn3_startup start${NC}"
+            rknn3_startup start 2>/dev/null
+        elif [[ "$comm_mode" == "USB" ]]; then
+            echo -e "${YELLOW}   USB mode: waiting for udev auto-detection${NC}"
+        else
+            echo -e "${YELLOW}   Unknown mode: attempting rknn3_startup start${NC}"
+            rknn3_startup start 2>/dev/null
+        fi
 
         # Additional wait for system to stabilize
-        echo -e "${GREEN}Waiting 3 seconds for system to stabilize...${NC}"
+        echo -e "${GREEN}5. Waiting 2 seconds for system to stabilize...${NC}"
         sleep 2
 
-        # Step 4: Verify reboot success
-        echo -e "${GREEN}4. Verifying reboot success...${NC}"
+        # Step 6: Verify reboot success
+        echo -e "${GREEN}6. Verifying reboot success for device $device_id...${NC}"
         local version_output
         version_output=$(rknn-smi --version 2>/dev/null)
 
         if echo "$version_output" | grep -q "rknn-smi version"; then
-            echo -e "${GREEN}Reboot iteration $current_iteration completed successfully${NC}"
+            echo -e "${GREEN}Reboot iteration $current_iteration for device $device_id completed successfully${NC}"
             ((successful_reboots++))
         else
-            echo -e "${RED}Reboot iteration $current_iteration failed${NC}"
+            echo -e "${RED}Reboot iteration $current_iteration for device $device_id failed${NC}"
             ((failed_reboots++))
+            echo -e "${RED}Stopping test due to failure${NC}"
+            break
         fi
 
         if [[ "$loop_count" -eq 0 ]] || [[ "$current_iteration" -lt "$loop_count" ]]; then
@@ -433,7 +506,7 @@ reboot_test() {
         fi
     done
 
-    # 重置信号捕获
+    # Reset signal capture
     trap - INT
 
     # Display test summary
@@ -441,14 +514,16 @@ reboot_test() {
     echo -e "${CYAN}=== Reboot Test Summary ===${NC}"
 
     if [[ "$loop_count" -eq 0 ]]; then
-        echo -e "Test mode: Infinite (manually stopped)"
+        echo -e "Test mode: Infinite (manually stopped or failure)"
     else
-        echo -e "Total iterations: $loop_count"
+        echo -e "Total iterations requested: $loop_count"
     fi
 
+    echo -e "Device ID: $device_id"
+    echo -e "Communication Mode: $comm_mode"
     echo -e "Completed iterations: $((current_iteration - 1))"
     echo -e "${GREEN}Successful reboots: $successful_reboots${NC}"
-    echo -e "Reset type used: $reset_type"
+    echo -e "Reset type used: $reset_type_display"
 
     if [[ $failed_reboots -gt 0 ]]; then
         echo -e "${RED}Failed reboots: $failed_reboots${NC}"
@@ -658,9 +733,18 @@ hardware_reset_test() {
 
     echo -e "${CYAN}=== Starting Hardware Reset Test for Device $device_id ===${NC}"
 
-    # Validate inputs
-    if [[ ! "$loop_count" =~ ^[0-9]+$ ]] || [[ "$loop_count" -lt 1 ]] || [[ "$loop_count" -gt 100 ]]; then
-        echo -e "${RED}Error: Loop count must be a number between 1 and 100${NC}"
+    # Validate inputs - support 0 for infinite loop
+    if [[ ! "$loop_count" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}Error: Loop count must be a non-negative integer${NC}"
+        return 1
+    fi
+
+    loop_count=$((10#$loop_count))  # Ensure base-10 interpretation
+
+    if [[ "$loop_count" -eq 0 ]]; then
+        echo -e "${YELLOW}Infinite loop mode selected - test will run until manually stopped or failure${NC}"
+    elif [[ "$loop_count" -lt 1 ]] || [[ "$loop_count" -gt 99999 ]]; then
+        echo -e "${RED}Error: Loop count must be 0 (infinite) or between 1 and 99999${NC}"
         return 1
     fi
 
@@ -670,32 +754,92 @@ hardware_reset_test() {
         return 1
     fi
 
-    if ! command -v rknn3_startup &> /dev/null; then
-        echo -e "${RED}rknn3_startup command not found${NC}"
-        return 1
+    # Get device communication mode and BusAddr/SN for identifying proxy processes
+    local comm_mode=""
+    local bus_addr_or_sn=""
+
+    # Get communication mode from rknn-smi info -t board
+    local board_info=$(rknn-smi info -t board -d "$device_id" 2>/dev/null)
+
+    # Check for communication mode
+    if echo "$board_info" | grep -q "Communication mode"; then
+        comm_mode=$(echo "$board_info" | grep "Communication mode" | sed 's/.*Communication mode[[:space:]]*:[[:space:]]*//' | tr -d '[:space:]')
     fi
 
-    echo -e "${YELLOW}Reset test will run $loop_count times for device $device_id${NC}"
+    # Get BusAddr (PCIe) or Chip CPUID (USB) for identifying proxy process
+    if [[ "$comm_mode" == "PCIe" ]]; then
+        # PCIe mode: get PCIe Bus Info
+        if echo "$board_info" | grep -q "PCIe Bus Info"; then
+            bus_addr_or_sn=$(echo "$board_info" | grep "PCIe Bus Info" | sed 's/.*PCIe Bus Info[[:space:]]*:[[:space:]]*//' | tr -d '[:space:]')
+        fi
+    elif [[ "$comm_mode" == "USB" ]]; then
+        # USB mode: get Chip CPUID (first 16 chars)
+        if echo "$board_info" | grep -q "Chip CPUID"; then
+            local full_cpuid=$(echo "$board_info" | grep "Chip CPUID" | sed 's/.*Chip CPUID[[:space:]]*:[[:space:]]*//' | tr -d '[:space:]')
+            bus_addr_or_sn="${full_cpuid:0:16}"
+        fi
+    fi
+
+    echo -e "${YELLOW}Device $device_id Communication Mode: ${comm_mode:-UNKNOWN}${NC}"
+    if [[ -n "$bus_addr_or_sn" ]]; then
+        echo -e "${YELLOW}Device BusAddr/SN: $bus_addr_or_sn${NC}"
+    fi
+
+    if [[ "$loop_count" -eq 0 ]]; then
+        echo -e "${YELLOW}Reset test will run indefinitely until manually stopped or failure for device $device_id${NC}"
+    else
+        echo -e "${YELLOW}Reset test will run $loop_count times for device $device_id${NC}"
+    fi
     echo
 
     local successful_resets=0
     local failed_resets=0
+    local current_iteration=0
 
     echo -e "${GREEN}Starting reset test sequence...${NC}"
     echo -e "${YELLOW}Press Ctrl+C to stop the test at any time${NC}"
+    echo -e "${RED}Test will stop immediately if a reset fails${NC}"
     echo
 
     trap 'echo -e "\n${YELLOW}Test interrupted by user${NC}"; break' INT
 
-    # Main loop
-    for ((iteration=1; iteration<=loop_count; iteration++)); do
-        echo -e "${BLUE}=== Reset Test Iteration $iteration of $loop_count for Device $device_id ===${NC}"
+    # Main loop - support infinite loop when loop_count is 0
+    while true; do
+        ((current_iteration++))
+        if [[ "$loop_count" -ne 0 ]] && [[ "$current_iteration" -gt "$loop_count" ]]; then
+            break
+        fi
 
-        # The background program of npu needs to be closed first
-        pkill -f "rknn3_transfer_proxy"
+        if [[ "$loop_count" -eq 0 ]]; then
+            echo -e "${BLUE}=== Reset Test Iteration $current_iteration (Infinite Mode) for Device $device_id ===${NC}"
+        else
+            echo -e "${BLUE}=== Reset Test Iteration $current_iteration of $loop_count for Device $device_id ===${NC}"
+        fi
 
-        # Step 1: Reset
-        echo -e "${GREEN}1. Executing reset for device $device_id: rknn-smi reset -d $device_id -t $reset_type${NC}"
+        # Step 1: Clean up processes using this device (per documentation)
+        echo -e "${GREEN}1. Cleaning up processes for device $device_id...${NC}"
+
+        # Kill user application processes (rknn3_llm_demo, rknn3_cnn_demo, etc.)
+        echo -e "${YELLOW}   Killing user application processes...${NC}"
+        killall rknn3_llm_demo 2>/dev/null || true
+        killall rknn3_cnn_demo 2>/dev/null || true
+        killall rknn3_vlm_demo 2>/dev/null || true
+
+        # Kill specific proxy process for this device
+        # The proxy process name format: rknn3_transfer_proxy_xxxxxxxx -s [BusAddr/SN]
+        if [[ -n "$bus_addr_or_sn" ]]; then
+            echo -e "${YELLOW}   Killing proxy process for device $device_id (BusAddr/SN: $bus_addr_or_sn)...${NC}"
+            pkill -f "rknn3_transfer_proxy.*-s.*$bus_addr_or_sn" 2>/dev/null || true
+        else
+            # Fallback: kill all transfer proxy processes if we can't identify specific one
+            echo -e "${YELLOW}   Killing all rknn3_transfer_proxy processes (BusAddr/SN not available)...${NC}"
+            pkill -f "rknn3_transfer_proxy" 2>/dev/null || true
+        fi
+
+        sleep 1
+
+        # Step 2: Reset
+        echo -e "${GREEN}2. Executing reset for device $device_id: rknn-smi reset -d $device_id -t $reset_type${NC}"
 
         # Validate reset_type to prevent command injection
         case "$reset_type" in
@@ -709,34 +853,53 @@ hardware_reset_test() {
                 ;;
         esac
 
-        # Step 2: Sleep for 2 seconds
-        echo -e "${GREEN}2. Waiting for 2 seconds...${NC}"
+        # Step 3: Sleep for device to stabilize
+        echo -e "${GREEN}3. Waiting for device to stabilize (2 seconds)...${NC}"
         sleep 2
 
-        # Step 3: Restart rknn3 startup
-        echo -e "${GREEN}3. Restarting rknn3 startup: rknn3_startup restart${NC}"
-        rknn3_startup restart 2>/dev/null
+        # Step 4: Service recovery (per documentation - different for PCIe and USB)
+        echo -e "${GREEN}4. Service recovery...${NC}"
+
+        if [[ "$comm_mode" == "PCIe" ]]; then
+            # PCIe mode: manually restart service using rknn3_startup start
+            echo -e "${YELLOW}   PCIe mode: executing rknn3_startup start${NC}"
+            rknn3_startup start 2>/dev/null
+        elif [[ "$comm_mode" == "USB" ]]; then
+            # USB mode: no manual intervention needed (udev auto-detects)
+            echo -e "${YELLOW}   USB mode: waiting for udev auto-detection (no manual intervention needed)${NC}"
+        else
+            # Unknown mode: try rknn3_startup start as fallback
+            echo -e "${YELLOW}   Unknown communication mode, attempting rknn3_startup start${NC}"
+            rknn3_startup start 2>/dev/null
+        fi
 
         # Additional wait for system to stabilize
-        echo -e "${GREEN}Waiting 2 seconds for system to stabilize...${NC}"
+        echo -e "${GREEN}5. Waiting 2 seconds for system to stabilize...${NC}"
         sleep 2
 
-        # Step 4: Verify reboot success
-        echo -e "${GREEN}4. Verifying reset success for device $device_id...${NC}"
+        # Step 6: Verify reset success
+        echo -e "${GREEN}6. Verifying reset success for device $device_id...${NC}"
         local version_output
         version_output=$(rknn-smi --version 2>/dev/null)
 
         if echo "$version_output" | grep -q "rknn-smi version"; then
-            echo -e "${GREEN}Reset iteration $iteration for device $device_id completed successfully${NC}"
+            echo -e "${GREEN}Reset iteration $current_iteration for device $device_id completed successfully${NC}"
             ((successful_resets++))
         else
-            echo -e "${RED}Reset iteration $iteration for device $device_id failed${NC}"
+            echo -e "${RED}Reset iteration $current_iteration for device $device_id failed${NC}"
             ((failed_resets++))
+            # Stop immediately on failure for safety
+            echo -e "${RED}Stopping test due to reset failure${NC}"
+            break
         fi
 
-        if [[ "$iteration" -lt "$loop_count" ]]; then
+        if [[ "$loop_count" -eq 0 ]] || [[ "$current_iteration" -lt "$loop_count" ]]; then
             echo
-            echo -e "${YELLOW}Preparing for next iteration...${NC}"
+            if [[ "$loop_count" -eq 0 ]]; then
+                echo -e "${YELLOW}Infinite loop mode - Press Ctrl+C to stop, continuing in 2 seconds...${NC}"
+            else
+                echo -e "${YELLOW}Preparing for next iteration...${NC}"
+            fi
             sleep 2
             echo
         fi
@@ -748,15 +911,22 @@ hardware_reset_test() {
     # Display test summary
     echo
     echo -e "${CYAN}=== Reset Test Summary for Device $device_id ===${NC}"
-    echo -e "Total iterations: $loop_count"
-    echo -e "Successful resets: $successful_resets"
-    echo -e "Failed resets: $failed_resets"
+
+    if [[ "$loop_count" -eq 0 ]]; then
+        echo -e "Test mode: Infinite (manually stopped or failure detected)"
+    else
+        echo -e "Total iterations requested: $loop_count"
+    fi
+
+    echo -e "Completed iterations: $((current_iteration - 1))"
+    echo -e "${GREEN}Successful resets: $successful_resets${NC}"
     echo -e "Reset type used: $reset_type"
 
-    if [[ $failed_resets -eq 0 ]]; then
-        echo -e "${GREEN}All reset tests for device $device_id completed successfully!${NC}"
+    if [[ $failed_resets -gt 0 ]]; then
+        echo -e "${RED}Failed resets: $failed_resets${NC}"
+        echo -e "${RED}Test stopped due to failure${NC}"
     else
-        echo -e "${RED}Some reset tests for device $device_id failed.${NC}"
+        echo -e "${GREEN}All reset tests for device $device_id completed successfully!${NC}"
     fi
 
     # Final verification
@@ -976,10 +1146,15 @@ record_smi_config() {
             store_device_config "$device_id" "smi_test_type" "Reset Test"
 
             # Ask for reset loop count but don't execute yet
-            read -rp "Enter number of reset loops (1-100) for scheduled test: " loop_count
-            if [[ ! "$loop_count" =~ ^[0-9]+$ ]] || [[ "$loop_count" -lt 1 ]] || [[ "$loop_count" -gt 100 ]]; then
+            read -rp "Enter number of reset loops (0=infinite, 1-99999) for scheduled test: " loop_count
+            if [[ ! "$loop_count" =~ ^[0-9]+$ ]]; then
                 echo "Invalid loop count. Defaulting to 1."
                 loop_count=1
+            fi
+            loop_count=$((10#$loop_count))  # Ensure base-10 interpretation
+            if [[ "$loop_count" -gt 99999 ]]; then
+                echo "Loop count exceeds maximum 99999. Defaulting to 99999."
+                loop_count=99999
             fi
 
             # Store the reset configuration

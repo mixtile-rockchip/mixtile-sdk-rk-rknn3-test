@@ -131,6 +131,7 @@ RETURN_TO_MAIN_MENU=false  # Flag to indicate if we should return to main menu
 
 # Device info arrays
 declare -A DEVICE_COMM_MODES  # Store communication mode for each device (key: device_id, value: comm_mode)
+declare -a DEVICE_IDS         # Store actual device IDs in order (for menu display mapping)
 
 # Task status enum
 TASK_STATUS_RUNNING="RUNNING"
@@ -231,13 +232,18 @@ enumerate_devices() {
         return 1
     fi
 
-    # Parse communication mode for each device
+    # Parse communication mode for each device and store actual Device IDs
     DEVICE_COMM_MODES=()
+    DEVICE_IDS=()  # Reset the array
     local current_device_id=""
+    local device_index=0
     while IFS= read -r line; do
         # Check for Device ID line
         if echo "$line" | grep -q "Device ID[[:space:]]*:"; then
             current_device_id=$(echo "$line" | grep -o "Device ID[[:space:]]*:[[:space:]]*[0-9]*" | grep -o "[0-9]*")
+            # Store the actual Device ID in order
+            DEVICE_IDS[$device_index]="$current_device_id"
+            ((device_index++))
         fi
         # Check for Communication mode line
         if [[ -n "$current_device_id" ]] && echo "$line" | grep -q "Communication mode[[:space:]]*:"; then
@@ -303,6 +309,7 @@ initialize_task_system() {
     TASK_LOG_FILES=()
     TASK_PREV_LOG_SIZES=()
     TASK_LAST_UPDATE_TIMES=()
+    TASK_STUCK_COUNTS=()  # Track consecutive stuck detections
 }
 
 # Function to add a new task to the tracking system
@@ -340,6 +347,7 @@ add_task() {
     # Initialize log size tracking with same start time for consistency
     TASK_PREV_LOG_SIZES+=(0)
     TASK_LAST_UPDATE_TIMES+=("$task_start_time")
+    TASK_STUCK_COUNTS+=(0)  # Initialize stuck detection counter
 }
 
 # Function to update task status
@@ -481,7 +489,7 @@ execute_test_in_background() {
                                     exit_code=1
                                 else
                                     echo "Executing: $demo_executable -f \"$model_path\" -id $device_id"
-                                    "$demo_executable" -f "$model_path" -id "$device_id"
+                                    stdbuf -oL "$demo_executable" -f "$model_path" -id "$device_id"
                                     exit_code=$?
                                 fi
                             fi
@@ -517,7 +525,7 @@ execute_test_in_background() {
                             fi
 
                             echo "Executing: $demo_executable -f \"$model_path\" -id $device_id -tl $stress_test_hours"
-                            "$demo_executable" -f "$model_path" -id "$device_id" -tl "$stress_test_hours"
+                            stdbuf -oL "$demo_executable" -f "$model_path" -id "$device_id" -tl "$stress_test_hours"
                             exit_code=$?
                             ;;
                         "Custom Test")
@@ -580,7 +588,7 @@ execute_test_in_background() {
                             fi
 
                             echo "Executing: ${cmd_array[*]}"
-                            "${cmd_array[@]}"
+                            stdbuf -oL "${cmd_array[@]}"
                             exit_code=$?
                             ;;
                         "Model Traversal Test")
@@ -648,7 +656,7 @@ execute_test_in_background() {
                                                 echo "Executing $demo_executable -f \"$full_model_path\" -id $device_id"
 
                                                 # Execute the model test
-                                                "$demo_executable" -f "$full_model_path" -id "$device_id"
+                                                stdbuf -oL "$demo_executable" -f "$full_model_path" -id "$device_id"
                                                 local model_exit_code=$?
 
                                                 if [[ $model_exit_code -ne 0 ]]; then
@@ -757,7 +765,7 @@ execute_test_in_background() {
         rm -f "$temp_config_file"
 
         exit $exit_code
-    } > "$log_file" 2>&1
+    }
 }
 
 # Function to check and update task statuses
@@ -841,23 +849,33 @@ update_task_statuses() {
             if [[ $time_since_last_check -ge $check_interval ]]; then
                 # Check if the log file size has changed since the last check
                 if [[ ${TASK_PREV_LOG_SIZES[$i]} -eq $current_size ]]; then
-                    # Log file hasn't changed in the check interval, consider the task stuck
-                    echo "Warning: Task $i (Device ${TASK_DEVICE_IDS[$i]}) seems stuck - log file size unchanged for $check_interval seconds"
-                    echo "Config type: ${TASK_CONFIG_TYPES[$i]}"
+                    # Log file hasn't changed in the check interval, increment stuck counter
+                    TASK_STUCK_COUNTS[$i]=$((TASK_STUCK_COUNTS[$i] + 1))
 
-                    # Kill the process
-                    kill -TERM "$pid" 2>/dev/null
+                    # Require 2 consecutive stuck detections before killing (tolerates timing misses)
+                    local stuck_threshold=2
+                    if [[ ${TASK_STUCK_COUNTS[$i]} -ge $stuck_threshold ]]; then
+                        echo "Warning: Task $i (Device ${TASK_DEVICE_IDS[$i]}) confirmed stuck - log file size unchanged for $((check_interval * stuck_threshold)) seconds"
+                        echo "Config type: ${TASK_CONFIG_TYPES[$i]}"
 
-                    # Update status to failed
-                    update_task_status $i "$TASK_STATUS_FAILED"
+                        # Kill the process
+                        kill -TERM "$pid" 2>/dev/null
+
+                        # Update status to failed
+                        update_task_status $i "$TASK_STATUS_FAILED"
+                    else
+                        echo "Info: Task $i (Device ${TASK_DEVICE_IDS[$i]}) - possible stuck detection (${TASK_STUCK_COUNTS[$i]}/${stuck_threshold}), waiting for confirmation"
+                    fi
                 else
-                    # Update the log file size and timestamp
+                    # Log file has changed, reset stuck counter and update tracking
+                    TASK_STUCK_COUNTS[$i]=0
                     TASK_PREV_LOG_SIZES[$i]=$current_size
                     TASK_LAST_UPDATE_TIMES[$i]=$current_time
                 fi
             else
                 # If it's been less than the check interval, just update the size if it changed
                 if [[ ${TASK_PREV_LOG_SIZES[$i]} -ne $current_size ]]; then
+                    TASK_STUCK_COUNTS[$i]=0  # Reset stuck counter when log changes
                     TASK_PREV_LOG_SIZES[$i]=$current_size
                     TASK_LAST_UPDATE_TIMES[$i]=$current_time
                 fi
@@ -1117,30 +1135,33 @@ display_configurations() {
     local has_configs=false
 
     for ((i=0; i<DEVICE_COUNT; i++)); do
+        # Get actual Device ID from DEVICE_IDS array
+        local actual_device_id="${DEVICE_IDS[$i]}"
+
         # Check for all types of configurations
-        test_category=$(get_device_config "$i" "test_category")
-        model_category=$(get_device_config "$i" "model_category")
-        specific_model=$(get_device_config "$i" "specific_model")
-        model_type=$(get_device_config "$i" "model_type")
-        model_path=$(get_device_config "$i" "model_path")
-        test_type=$(get_device_config "$i" "test_type")
-        stress_test_hours=$(get_device_config "$i" "stress_test_hours")
-        custom_test_params=$(get_device_config "$i" "custom_test_params")
-        smi_test_type=$(get_device_config "$i" "smi_test_type")
-        reset_loop_count=$(get_device_config "$i" "reset_loop_count")
-        sleep_wakeup_hours=$(get_device_config "$i" "sleep_wakeup_hours")
-        total_traversal_models=$(get_device_config "$i" "total_traversal_models")
-        traversal_loop_count=$(get_device_config "$i" "traversal_loop_count")
-        comm_mode=$(get_device_comm_mode "$i")
+        test_category=$(get_device_config "$actual_device_id" "test_category")
+        model_category=$(get_device_config "$actual_device_id" "model_category")
+        specific_model=$(get_device_config "$actual_device_id" "specific_model")
+        model_type=$(get_device_config "$actual_device_id" "model_type")
+        model_path=$(get_device_config "$actual_device_id" "model_path")
+        test_type=$(get_device_config "$actual_device_id" "test_type")
+        stress_test_hours=$(get_device_config "$actual_device_id" "stress_test_hours")
+        custom_test_params=$(get_device_config "$actual_device_id" "custom_test_params")
+        smi_test_type=$(get_device_config "$actual_device_id" "smi_test_type")
+        reset_loop_count=$(get_device_config "$actual_device_id" "reset_loop_count")
+        sleep_wakeup_hours=$(get_device_config "$actual_device_id" "sleep_wakeup_hours")
+        total_traversal_models=$(get_device_config "$actual_device_id" "total_traversal_models")
+        traversal_loop_count=$(get_device_config "$actual_device_id" "traversal_loop_count")
+        comm_mode=$(get_device_comm_mode "$actual_device_id")
 
         # Display configurations if any exist for this device
         if [[ -n "$test_category" || -n "$model_category" || -n "$specific_model" || -n "$test_type" || -n "$smi_test_type" ]]; then
             has_configs=true
-            echo "Device $i (${GREEN}Comm Mode: ${comm_mode}${NC}):"
+            echo "Device $actual_device_id (${GREEN}Comm Mode: ${comm_mode}${NC}):"
 
             # Validate device id
-            if [[ ! "$i" =~ ^[0-9]+$ ]]; then
-                echo "Warning: Invalid device id: $i" >&2
+            if [[ ! "$actual_device_id" =~ ^[0-9]+$ ]]; then
+                echo "Warning: Invalid device id: $actual_device_id" >&2
                 continue
             fi
 
@@ -1170,7 +1191,7 @@ display_configurations() {
                         for ((j=0; j<total_traversal_models; j++)); do
                             # Validate j is a number
                             if [[ "$j" =~ ^[0-9]+$ ]]; then
-                                local model_key=$(get_device_config "$i" "traversal_model_$j")
+                                local model_key=$(get_device_config "$actual_device_id" "traversal_model_$j")
                                 if [[ -n "$model_key" ]]; then
                                     # Sanitize model_key to prevent injection
                                     model_key=$(printf '%s\n' "$model_key" | tr -d '\0\r\n\t')
@@ -1228,12 +1249,13 @@ main_menu() {
         if [ $DEVICE_COUNT -gt 0 ]; then
             echo "Detected $DEVICE_COUNT device(s)"
             echo
-            echo "ID   Communication Mode"
-            echo "---- --------------------"
-            # Display available devices with communication mode
+            echo "ID   Device ID   Communication Mode"
+            echo "---- ---------- --------------------"
+            # Display available devices with actual Device ID and communication mode
             for ((i=0; i<DEVICE_COUNT; i++)); do
-                local comm_mode=$(get_device_comm_mode "$i")
-                printf "%-4s %-20s\n" "$((i+1))." "$comm_mode"
+                local actual_device_id="${DEVICE_IDS[$i]}"
+                local comm_mode=$(get_device_comm_mode "$actual_device_id")
+                printf "%-4s %-10s %-20s\n" "$((i+1))." "$actual_device_id" "$comm_mode"
             done
             echo
         else
@@ -1298,7 +1320,9 @@ main_menu() {
                 continue
             fi
 
-            local selected_device_id=$((choice - 1))
+            # Get the actual Device ID from DEVICE_IDS array
+            local menu_index=$((choice - 1))
+            local selected_device_id="${DEVICE_IDS[$menu_index]}"
             device_submenu "$selected_device_id"
 
             # After returning from device submenu, reset the flag to ensure normal operation
@@ -1327,24 +1351,26 @@ main_menu() {
 
             # Start a background process for each configured device
             for ((i=0; i<DEVICE_COUNT; i++)); do
-                test_category=$(get_device_config "$i" "test_category")
+                # Get actual Device ID from DEVICE_IDS array
+                local actual_device_id="${DEVICE_IDS[$i]}"
+                test_category=$(get_device_config "$actual_device_id" "test_category")
 
                 if [[ -n "$test_category" ]]; then
-                    echo "Starting test for Device $i with configuration: $test_category"
+                    echo "Starting test for Device $actual_device_id with configuration: $test_category"
 
                     # Create log file for this device's test
-                    local log_file="./test_results/device_${i}_$(date +%s).log"
+                    local log_file="./test_results/device_${actual_device_id}_$(date +%s).log"
 
-                    # Execute test in background and capture PID
-                    execute_test_in_background "$i" "$test_category" "$log_file" &
+                    # Execute test in background and capture PID with output redirection
+                    execute_test_in_background "$actual_device_id" "$test_category" "$log_file" > "$log_file" 2>&1 &
                     local bg_pid=$!
 
                     # Add task to our tracking system
-                    add_task "$bg_pid" "$i" "$test_category" "$log_file"
+                    add_task "$bg_pid" "$actual_device_id" "$test_category" "$log_file"
 
-                    echo "Started background test for Device $i (PID: $bg_pid)"
+                    echo "Started background test for Device $actual_device_id (PID: $bg_pid)"
                 else
-                    echo "Warning: Device $i has no test category configured. Please configure it first."
+                    echo "Warning: Device $actual_device_id has no test category configured. Please configure it first."
                 fi
             done
 
