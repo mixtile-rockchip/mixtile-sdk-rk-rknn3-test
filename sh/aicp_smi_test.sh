@@ -1205,6 +1205,293 @@ record_smi_config() {
 
 
 # ============================================================================
+# Multi-Device Round-Robin Reset Test
+# ============================================================================
+# This function performs reset tests on multiple devices in a round-robin fashion.
+# Instead of parallel execution, it resets devices sequentially: device0 -> device1 -> device2 -> ...
+# This avoids the problems of:
+#   1. killall killing processes on all devices
+#   2. Lock contention causing stuck detection
+#
+# Usage: multi_device_round_robin_reset_test <device_configs>
+#   device_configs format: "device_id:loop_count:reset_type" for each device, space-separated
+#   Example: "0:100:hw 1:100:hw 2:50:hw"
+#
+multi_device_round_robin_reset_test() {
+    local device_configs="$1"
+    local reset_type="${2:-hw}"  # Default to hardware reset
+
+    echo -e "${CYAN}=== Starting Multi-Device Round-Robin Reset Test ===${NC}"
+    echo
+
+    # Check if required commands exist
+    if ! command -v rknn-smi &> /dev/null; then
+        echo -e "${RED}rknn-smi command not found${NC}"
+        return 1
+    fi
+
+    # Parse device configurations
+    declare -a DEVICE_IDS
+    declare -a LOOP_COUNTS
+    declare -a CURRENT_COUNTS
+    declare -a SUCCESSFUL_COUNTS
+    declare -a FAILED_COUNTS
+    declare -a COMM_MODES
+    declare -a BUS_ADDR_SN
+    declare -a COMPLETED_FLAGS
+
+    local device_count=0
+    local max_rounds=0
+    local has_infinite=false
+
+    for config in $device_configs; do
+        # Parse each config: "device_id:loop_count"
+        local device_id=$(echo "$config" | cut -d':' -f1)
+        local loop_count=$(echo "$config" | cut -d':' -f2)
+
+        # Validate device_id
+        if [[ ! "$device_id" =~ ^[0-9]+$ ]]; then
+            echo -e "${RED}Invalid device ID in config: $config${NC}"
+            return 1
+        fi
+
+        # Validate loop_count (support 0 for infinite)
+        if [[ ! "$loop_count" =~ ^[0-9]+$ ]]; then
+            echo -e "${RED}Invalid loop count in config: $config${NC}"
+            return 1
+        fi
+
+        loop_count=$((10#$loop_count))  # Ensure base-10 interpretation
+
+        DEVICE_IDS[$device_count]=$device_id
+        LOOP_COUNTS[$device_count]=$loop_count
+        CURRENT_COUNTS[$device_count]=0
+        SUCCESSFUL_COUNTS[$device_count]=0
+        FAILED_COUNTS[$device_count]=0
+        COMPLETED_FLAGS[$device_count]=false
+
+        # Track maximum rounds needed (for finite loops)
+        if [[ "$loop_count" -eq 0 ]]; then
+            has_infinite=true
+        elif [[ "$loop_count" -gt "$max_rounds" ]]; then
+            max_rounds=$loop_count
+        fi
+
+        # Get device info (communication mode and BusAddr/SN)
+        local board_info=$(rknn-smi info -t board -d "$device_id" 2>/dev/null)
+        local comm_mode=""
+        local bus_addr_or_sn=""
+
+        if echo "$board_info" | grep -q "Communication mode"; then
+            comm_mode=$(echo "$board_info" | grep "Communication mode" | sed 's/.*Communication mode[[:space:]]*:[[:space:]]*//' | tr -d '[:space:]')
+        fi
+
+        if [[ "$comm_mode" == "PCIe" ]]; then
+            if echo "$board_info" | grep -q "PCIe Bus Info"; then
+                bus_addr_or_sn=$(echo "$board_info" | grep "PCIe Bus Info" | sed 's/.*PCIe Bus Info[[:space:]]*:[[:space:]]*//' | tr -d '[:space:]')
+            fi
+        elif [[ "$comm_mode" == "USB" ]]; then
+            if echo "$board_info" | grep -q "Chip CPUID"; then
+                local full_cpuid=$(echo "$board_info" | grep "Chip CPUID" | sed 's/.*Chip CPUID[[:space:]]*:[[:space:]]*//' | tr -d '[:space:]')
+                bus_addr_or_sn="${full_cpuid:0:16}"
+            fi
+        fi
+
+        COMM_MODES[$device_count]="$comm_mode"
+        BUS_ADDR_SN[$device_count]="$bus_addr_or_sn"
+
+        ((device_count++))
+    done
+
+    # Display test configuration
+    echo -e "${YELLOW}Test Configuration:${NC}"
+    echo -e "${YELLOW}  Total devices: $device_count${NC}"
+    echo -e "${YELLOW}  Reset type: $reset_type${NC}"
+    for i in "${!DEVICE_IDS[@]}"; do
+        local loop_str="${LOOP_COUNTS[$i]}"
+        if [[ "${LOOP_COUNTS[$i]}" -eq 0 ]]; then
+            loop_str="infinite"
+        fi
+        echo -e "${YELLOW}  Device ${DEVICE_IDS[$i]}: ${loop_str} iterations, Communication: ${COMM_MODES[$i]:-UNKNOWN}${NC}"
+    done
+    echo
+
+    if [[ "$has_infinite" == "true" ]]; then
+        echo -e "${YELLOW}Test will run indefinitely for some devices until manually stopped or failure${NC}"
+    fi
+
+    echo -e "${GREEN}Starting round-robin reset test sequence...${NC}"
+    echo -e "${YELLOW}Press Ctrl+C to stop the test at any time${NC}"
+    echo -e "${RED}Test will stop immediately if any device reset fails${NC}"
+    echo
+
+    # Trap Ctrl+C
+    trap 'echo -e "\n${YELLOW}Test interrupted by user${NC}"; break' INT
+
+    # Main round-robin loop
+    local current_round=0
+    local all_completed=false
+    local test_failed=false
+
+    while [[ "$all_completed" == "false" && "$test_failed" == "false" ]]; do
+        ((current_round++))
+
+        echo -e "${PURPLE}========== Round $current_round ==========${NC}"
+        echo
+
+        # Iterate through each device in order
+        for i in "${!DEVICE_IDS[@]}"; do
+            local device_id="${DEVICE_IDS[$i]}"
+            local loop_count="${LOOP_COUNTS[$i]}"
+            local current_count="${CURRENT_COUNTS[$i]}"
+            local comm_mode="${COMM_MODES[$i]}"
+            local bus_addr_or_sn="${BUS_ADDR_SN[$i]}"
+
+            # Check if this device has completed its iterations
+            if [[ "${COMPLETED_FLAGS[$i]}" == "true" ]]; then
+                echo -e "${GREEN}[Device $device_id] Already completed (${SUCCESSFUL_COUNTS[$i]}/${loop_count}), skipping...${NC}"
+                continue
+            fi
+
+            # Check if this device has reached its target
+            if [[ "$loop_count" -ne 0 ]] && [[ "$current_count" -ge "$loop_count" ]]; then
+                COMPLETED_FLAGS[$i]=true
+                echo -e "${GREEN}[Device $device_id] Target reached (${current_count}/${loop_count}), marking as completed${NC}"
+                continue
+            fi
+
+            echo -e "${BLUE}--- [Device $device_id] Reset iteration $((current_count + 1)) ---${NC}"
+
+            # Step 1: Clean up processes for this device
+            echo -e "${GREEN}1. Cleaning up processes for device $device_id...${NC}"
+            killall rknn3_llm_demo 2>/dev/null || true
+            killall rknn3_cnn_demo 2>/dev/null || true
+            killall rknn3_vlm_demo 2>/dev/null || true
+
+            if [[ -n "$bus_addr_or_sn" ]]; then
+                echo -e "${YELLOW}   Killing proxy process (BusAddr/SN: $bus_addr_or_sn)...${NC}"
+                pkill -f "rknn3_transfer_proxy.*-s.*$bus_addr_or_sn" 2>/dev/null || true
+            else
+                pkill -f "rknn3_transfer_proxy" 2>/dev/null || true
+            fi
+            sleep 1
+
+            # Step 2: Execute reset
+            echo -e "${GREEN}2. Executing reset for device $device_id...${NC}"
+            local reset_ret=0
+            rknn-smi reset -d "$device_id" -t "$reset_type" 2>/dev/null
+            reset_ret=$?
+
+            if [[ $reset_ret -ne 0 ]]; then
+                echo -e "${RED}Reset command failed for device $device_id (return: $reset_ret)${NC}"
+                ((FAILED_COUNTS[$i]++))
+                test_failed=true
+                break
+            fi
+
+            # Step 3: Wait for device to stabilize
+            echo -e "${GREEN}3. Waiting for device to stabilize (2 seconds)...${NC}"
+            sleep 2
+
+            # Step 4: Service recovery
+            echo -e "${GREEN}4. Service recovery...${NC}"
+            if [[ "$comm_mode" == "PCIe" ]]; then
+                rknn3_startup start 2>/dev/null
+            elif [[ "$comm_mode" == "USB" ]]; then
+                echo -e "${YELLOW}   USB mode: waiting for udev auto-detection${NC}"
+            else
+                rknn3_startup start 2>/dev/null
+            fi
+
+            # Step 5: Additional stabilization wait
+            echo -e "${GREEN}5. Waiting 2 seconds for system stabilization...${NC}"
+            sleep 2
+
+            # Step 6: Verify reset success
+            echo -e "${GREEN}6. Verifying reset success for device $device_id...${NC}"
+            local version_output=$(rknn-smi --version 2>/dev/null)
+
+            if echo "$version_output" | grep -q "rknn-smi version"; then
+                echo -e "${GREEN}Reset for device $device_id completed successfully${NC}"
+                ((SUCCESSFUL_COUNTS[$i]++))
+                ((CURRENT_COUNTS[$i]++))
+            else
+                echo -e "${RED}Reset verification failed for device $device_id${NC}"
+                ((FAILED_COUNTS[$i]++))
+                test_failed=true
+                break
+            fi
+
+            echo
+        done
+
+        # Check if all devices have completed
+        all_completed=true
+        for i in "${!DEVICE_IDS[@]}"; do
+            if [[ "${COMPLETED_FLAGS[$i]}" == "false" ]]; then
+                all_completed=false
+                break
+            fi
+        done
+
+        # For infinite mode, check if any device has infinite loop
+        if [[ "$has_infinite" == "true" && "$test_failed" == "false" ]]; then
+            all_completed=false
+        fi
+
+        if [[ "$all_completed" == "false" && "$test_failed" == "false" ]]; then
+            echo -e "${YELLOW}Preparing for next round...${NC}"
+            sleep 2
+        fi
+    done
+
+    # Reset signal capture
+    trap - INT
+
+    # Display final summary
+    echo
+    echo -e "${CYAN}==========================================${NC}"
+    echo -e "${CYAN}=== Multi-Device Round-Robin Reset Test Summary ===${NC}"
+    echo -e "${CYAN}==========================================${NC}"
+    echo
+
+    echo -e "${YELLOW}Total rounds executed: $current_round${NC}"
+    echo
+
+    local overall_success=true
+    for i in "${!DEVICE_IDS[@]}"; do
+        local device_id="${DEVICE_IDS[$i]}"
+        local loop_count="${LOOP_COUNTS[$i]}"
+        local successful="${SUCCESSFUL_COUNTS[$i]}"
+        local failed="${FAILED_COUNTS[$i]}"
+
+        echo -e "${CYAN}Device $device_id:${NC}"
+        if [[ "$loop_count" -eq 0 ]]; then
+            echo -e "  Target: Infinite"
+        else
+            echo -e "  Target: $loop_count iterations"
+        fi
+        echo -e "  Completed: ${CURRENT_COUNTS[$i]} iterations"
+        echo -e "${GREEN}  Successful: $successful${NC}"
+
+        if [[ $failed -gt 0 ]]; then
+            echo -e "${RED}  Failed: $failed${NC}"
+            overall_success=false
+        fi
+        echo
+    done
+
+    if [[ "$overall_success" == "true" ]]; then
+        echo -e "${GREEN}All reset tests completed successfully!${NC}"
+        return 0
+    else
+        echo -e "${RED}Some reset tests failed${NC}"
+        return 1
+    fi
+}
+
+
+# ============================================================================
 # Standalone execution support
 # ============================================================================
 

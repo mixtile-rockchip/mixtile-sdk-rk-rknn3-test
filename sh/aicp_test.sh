@@ -1329,8 +1329,8 @@ main_menu() {
             RETURN_TO_MAIN_MENU=false
         # Handle additional options
         elif [[ $choice -eq $additional_options_start ]]; then
-            # Start Testing Process - execute tests on all devices concurrently based on stored configurations
-            echo -e "${GREEN}Starting concurrent tests on all devices based on stored configurations...${NC}"
+            # Start Testing Process - execute tests on all devices based on stored configurations
+            echo -e "${GREEN}Starting tests on all devices based on stored configurations...${NC}"
 
             # Clean up test results directory first
             if [[ -d "./test_results" ]]; then
@@ -1349,42 +1349,114 @@ main_menu() {
             # Create test results directory if it doesn't exist
             mkdir -p "./test_results"
 
-            # Start a background process for each configured device
+            # Check if all configured devices are Reset Test - use round-robin mode instead of parallel
+            local reset_test_devices=()
+            local reset_test_loop_counts=()
+            local all_reset_test=true
+            local has_other_test=false
+            local configured_device_count=0
+
             for ((i=0; i<DEVICE_COUNT; i++)); do
-                # Get actual Device ID from DEVICE_IDS array
                 local actual_device_id="${DEVICE_IDS[$i]}"
-                test_category=$(get_device_config "$actual_device_id" "test_category")
+                local test_category=$(get_device_config "$actual_device_id" "test_category")
+                local smi_test_type=$(get_device_config "$actual_device_id" "smi_test_type")
 
                 if [[ -n "$test_category" ]]; then
-                    echo "Starting test for Device $actual_device_id with configuration: $test_category"
-
-                    # Create log file for this device's test
-                    local log_file="./test_results/device_${actual_device_id}_$(date +%s).log"
-
-                    # Execute test in background and capture PID with output redirection
-                    execute_test_in_background "$actual_device_id" "$test_category" "$log_file" > "$log_file" 2>&1 &
-                    local bg_pid=$!
-
-                    # Add task to our tracking system
-                    add_task "$bg_pid" "$actual_device_id" "$test_category" "$log_file"
-
-                    echo "Started background test for Device $actual_device_id (PID: $bg_pid)"
-                else
-                    echo "Warning: Device $actual_device_id has no test category configured. Please configure it first."
+                    ((configured_device_count++))
+                    if [[ "$test_category" == "SMI Testing" && "$smi_test_type" == "Reset Test" ]]; then
+                        local loop_count=$(get_device_config "$actual_device_id" "reset_loop_count")
+                        reset_test_devices+=("$actual_device_id:$loop_count")
+                        reset_test_loop_counts+=("$loop_count")
+                    else
+                        all_reset_test=false
+                        has_other_test=true
+                    fi
                 fi
             done
 
-            # Start monitoring the background tasks
-            if [[ ${#TASK_PIDS[@]} -gt 0 ]]; then
+            # If all configured devices are Reset Test (and more than 1), use round-robin mode
+            if [[ "$all_reset_test" == "true" && ${#reset_test_devices[@]} -gt 1 ]]; then
                 echo
-                echo -e "${GREEN}Background tasks started. Monitoring progress...${NC}"
-                echo "Press Ctrl+C to interrupt monitoring (tasks will continue running in background)"
+                echo -e "${CYAN}Detected ${#reset_test_devices[@]} devices configured for Reset Test${NC}"
+                echo -e "${CYAN}Using round-robin execution mode to avoid multi-device conflicts${NC}"
+                echo
 
-                # Monitor all tasks
-                monitor_tasks
+                # Build device configs string
+                local device_configs_str=""
+                for config in "${reset_test_devices[@]}"; do
+                    device_configs_str="$device_configs_str $config"
+                done
+                device_configs_str=$(echo "$device_configs_str" | xargs)  # Trim leading/trailing spaces
+
+                # Create log file for round-robin test
+                local log_file="./test_results/round_robin_reset_$(date +%s).log"
+
+                echo -e "${GREEN}Starting round-robin reset test...${NC}"
+                echo -e "${YELLOW}Log file: $log_file${NC}"
+                echo
+
+                # Execute round-robin test (foreground, not background)
+                {
+                    multi_device_round_robin_reset_test "$device_configs_str" "hw"
+                } | tee "$log_file"
+                local round_robin_ret=${PIPESTATUS[0]}
+
+                echo
+                if [[ $round_robin_ret -eq 0 ]]; then
+                    echo -e "${GREEN}Round-robin reset test completed successfully!${NC}"
+                else
+                    echo -e "${RED}Round-robin reset test failed${NC}"
+                fi
+
+                echo
+                echo -e "${GREEN}Press any key to return to main menu...${NC}"
+                read -n 1 -s -r
+
             else
-                echo -e "${YELLOW}No configured devices found to test.${NC}"
-                wait_for_user
+                # Use original parallel execution mode for other test types or single device
+                if [[ "$has_other_test" == "true" ]]; then
+                    echo -e "${YELLOW}Mixed test types detected, using parallel execution mode${NC}"
+                elif [[ ${#reset_test_devices[@]} -eq 1 ]]; then
+                    echo -e "${YELLOW}Single device Reset Test, using normal execution mode${NC}"
+                fi
+
+                # Start a background process for each configured device
+                for ((i=0; i<DEVICE_COUNT; i++)); do
+                    # Get actual Device ID from DEVICE_IDS array
+                    local actual_device_id="${DEVICE_IDS[$i]}"
+                    test_category=$(get_device_config "$actual_device_id" "test_category")
+
+                    if [[ -n "$test_category" ]]; then
+                        echo "Starting test for Device $actual_device_id with configuration: $test_category"
+
+                        # Create log file for this device's test
+                        local log_file="./test_results/device_${actual_device_id}_$(date +%s).log"
+
+                        # Execute test in background and capture PID with output redirection
+                        execute_test_in_background "$actual_device_id" "$test_category" "$log_file" > "$log_file" 2>&1 &
+                        local bg_pid=$!
+
+                        # Add task to our tracking system
+                        add_task "$bg_pid" "$actual_device_id" "$test_category" "$log_file"
+
+                        echo "Started background test for Device $actual_device_id (PID: $bg_pid)"
+                    else
+                        echo "Warning: Device $actual_device_id has no test category configured. Please configure it first."
+                    fi
+                done
+
+                # Start monitoring the background tasks
+                if [[ ${#TASK_PIDS[@]} -gt 0 ]]; then
+                    echo
+                    echo -e "${GREEN}Background tasks started. Monitoring progress...${NC}"
+                    echo "Press Ctrl+C to interrupt monitoring (tasks will continue running in background)"
+
+                    # Monitor all tasks
+                    monitor_tasks
+                else
+                    echo -e "${YELLOW}No configured devices found to test.${NC}"
+                    wait_for_user
+                fi
             fi
         elif [[ $choice -eq $((additional_options_start + 1)) ]]; then
             # Show stored configurations
