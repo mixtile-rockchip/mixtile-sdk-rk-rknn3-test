@@ -724,7 +724,8 @@ execute_test_in_background() {
                             fi
 
                             if command -v hardware_reset_test &> /dev/null; then
-                                hardware_reset_test "$device_id" "$loop_count" "hw"
+                                # Reset type will be determined automatically based on communication mode
+                                hardware_reset_test "$device_id" "$loop_count"
                                 exit_code=$?  # Capture return value
                             else
                                 echo "Reset test function not available"
@@ -1396,8 +1397,9 @@ main_menu() {
                 echo
 
                 # Execute round-robin test (foreground, not background)
+                # Reset type will be determined automatically based on each device's communication mode
                 {
-                    multi_device_round_robin_reset_test "$device_configs_str" "hw"
+                    multi_device_round_robin_reset_test "$device_configs_str"
                 } | tee "$log_file"
                 local round_robin_ret=${PIPESTATUS[0]}
 

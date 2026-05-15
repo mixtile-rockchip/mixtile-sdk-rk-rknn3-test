@@ -34,6 +34,20 @@ check_rknn_smi() {
     return 0
 }
 
+# Execute reset command based on reset type
+# Usage: execute_reset <device_id> <reset_type>
+#   reset_type: "hw" for hardware reset, empty for normal reset
+execute_reset() {
+    local device_id="$1"
+    local reset_type="$2"
+
+    if [[ "$reset_type" == "hw" ]]; then
+        rknn-smi reset -d "$device_id" -t hw 2>/dev/null
+    else
+        rknn-smi reset -d "$device_id" 2>/dev/null
+    fi
+}
+
 # Get device list
 get_device_list() {
     rknn-smi info -l 2>/dev/null | grep "Device ID" | awk '{print $NF}' | sort -n
@@ -371,32 +385,24 @@ reboot_test() {
     fi
     echo
 
-    # Ask whether to use hardware reset
-    while true; do
-        read -p "Use hardware reset? (y/n): " use_hw_reset
-        if [[ -z "$use_hw_reset" ]]; then
-            echo -e "${RED}Error: Input cannot be empty, please re-enter!${NC}"
-            continue
-        fi
-
-        use_hw_reset_lower=$(echo "$use_hw_reset" | tr '[:upper:]' '[:lower:]')
-        if [[ "$use_hw_reset_lower" == "y" || "$use_hw_reset_lower" == "n" ]]; then
-            break
-        else
-            echo -e "${RED}Error: Please enter y or n!${NC}"
-        fi
-    done
-
-    # Set reset type based on user selection
-    if [[ "$use_hw_reset_lower" == "y" ]]; then
+    # Determine reset type based on communication mode
+    local reset_type
+    local reset_type_display
+    if [[ "$comm_mode" == "PCIe" ]]; then
         reset_type="hw"
-        reset_type_display="hardware reset"
+        reset_type_display="hardware reset (hw)"
+        echo -e "${YELLOW}PCIe mode detected: using hardware reset${NC}"
+    elif [[ "$comm_mode" == "USB" ]]; then
+        reset_type=""
+        reset_type_display="normal reset"
+        echo -e "${YELLOW}USB mode detected: using normal reset${NC}"
     else
         reset_type=""
         reset_type_display="normal reset"
+        echo -e "${YELLOW}Unknown mode: using normal reset for safety${NC}"
     fi
 
-    echo -e "${GREEN}Selected reset type: $reset_type_display${NC}"
+    echo -e "${GREEN}Reset type: $reset_type_display${NC}"
     echo
 
     # Confirm test execution
@@ -453,15 +459,11 @@ reboot_test() {
 
         # Step 2: Reset
         echo -e "${GREEN}2. Executing $reset_type_display for device $device_id...${NC}"
-        if [[ "$reset_type" == "hw" ]]; then
-            rknn-smi reset -t hw -d "$device_id" 2>/dev/null
-        else
-            rknn-smi reset -d "$device_id" 2>/dev/null
-        fi
+        execute_reset "$device_id" "$reset_type"
 
         # Step 3: Sleep for device to stabilize
-        echo -e "${GREEN}3. Waiting for device to stabilize (2 seconds)...${NC}"
-        sleep 2
+        echo -e "${GREEN}3. Waiting for device to stabilize (5 seconds)...${NC}"
+        sleep 5
 
         # Step 4: Service recovery (per documentation)
         echo -e "${GREEN}4. Service recovery...${NC}"
@@ -469,15 +471,16 @@ reboot_test() {
             echo -e "${YELLOW}   PCIe mode: executing rknn3_startup start${NC}"
             rknn3_startup start 2>/dev/null
         elif [[ "$comm_mode" == "USB" ]]; then
-            echo -e "${YELLOW}   USB mode: waiting for udev auto-detection${NC}"
+            echo -e "${YELLOW}   USB mode: executing rknn3_startup start${NC}"
+            rknn3_startup start 2>/dev/null
         else
-            echo -e "${YELLOW}   Unknown mode: attempting rknn3_startup start${NC}"
+            echo -e "${YELLOW}   Unknown mode: executing rknn3_startup start${NC}"
             rknn3_startup start 2>/dev/null
         fi
 
         # Additional wait for system to stabilize
-        echo -e "${GREEN}5. Waiting 2 seconds for system to stabilize...${NC}"
-        sleep 2
+        echo -e "${GREEN}5. Waiting 5 seconds for system to stabilize...${NC}"
+        sleep 5
 
         # Step 6: Verify reboot success
         echo -e "${GREEN}6. Verifying reboot success for device $device_id...${NC}"
@@ -729,7 +732,7 @@ sleep_wakeup_test() {
 hardware_reset_test() {
     local device_id="$1"
     local loop_count="${2:-1}"  # Default to 1 if not specified
-    local reset_type="${3:-hw}" # Default to hardware reset if not specified
+    local reset_type="${3:-}"   # Default to empty (will be determined by communication mode)
 
     echo -e "${CYAN}=== Starting Hardware Reset Test for Device $device_id ===${NC}"
 
@@ -780,7 +783,31 @@ hardware_reset_test() {
         fi
     fi
 
+    # Determine reset type based on communication mode if not explicitly specified
+    if [[ -z "$reset_type" ]]; then
+        if [[ "$comm_mode" == "PCIe" ]]; then
+            reset_type="hw"
+            echo -e "${YELLOW}PCIe mode detected: using hardware reset (hw)${NC}"
+        elif [[ "$comm_mode" == "USB" ]]; then
+            reset_type=""
+            echo -e "${YELLOW}USB mode detected: using normal reset (no hw parameter)${NC}"
+        else
+            # Unknown mode: default to normal reset for safety
+            reset_type=""
+            echo -e "${YELLOW}Unknown communication mode: using normal reset for safety${NC}"
+        fi
+    fi
+
+    # Display reset type in a readable format
+    local reset_type_display
+    if [[ "$reset_type" == "hw" ]]; then
+        reset_type_display="hardware reset (hw)"
+    else
+        reset_type_display="normal reset"
+    fi
+
     echo -e "${YELLOW}Device $device_id Communication Mode: ${comm_mode:-UNKNOWN}${NC}"
+    echo -e "${YELLOW}Reset type: $reset_type_display${NC}"
     if [[ -n "$bus_addr_or_sn" ]]; then
         echo -e "${YELLOW}Device BusAddr/SN: $bus_addr_or_sn${NC}"
     fi
@@ -839,25 +866,21 @@ hardware_reset_test() {
         sleep 1
 
         # Step 2: Reset
-        echo -e "${GREEN}2. Executing reset for device $device_id: rknn-smi reset -d $device_id -t $reset_type${NC}"
+        local reset_type_display
+        if [[ "$reset_type" == "hw" ]]; then
+            reset_type_display="hardware reset (hw)"
+        else
+            reset_type_display="normal reset"
+        fi
+        echo -e "${GREEN}2. Executing $reset_type_display for device $device_id...${NC}"
 
-        # Validate reset_type to prevent command injection
-        case "$reset_type" in
-            hw|soft|"")
-                # Valid reset types, execute command directly
-                rknn-smi reset -d "$device_id" -t "$reset_type" 2>/dev/null
-                ;;
-            *)
-                echo -e "${RED}Invalid reset type: $reset_type${NC}"
-                return 1
-                ;;
-        esac
+        execute_reset "$device_id" "$reset_type"
 
         # Step 3: Sleep for device to stabilize
-        echo -e "${GREEN}3. Waiting for device to stabilize (2 seconds)...${NC}"
-        sleep 2
+        echo -e "${GREEN}3. Waiting for device to stabilize (5 seconds)...${NC}"
+        sleep 5
 
-        # Step 4: Service recovery (per documentation - different for PCIe and USB)
+        # Step 4: Service recovery (per documentation)
         echo -e "${GREEN}4. Service recovery...${NC}"
 
         if [[ "$comm_mode" == "PCIe" ]]; then
@@ -865,17 +888,18 @@ hardware_reset_test() {
             echo -e "${YELLOW}   PCIe mode: executing rknn3_startup start${NC}"
             rknn3_startup start 2>/dev/null
         elif [[ "$comm_mode" == "USB" ]]; then
-            # USB mode: no manual intervention needed (udev auto-detects)
-            echo -e "${YELLOW}   USB mode: waiting for udev auto-detection (no manual intervention needed)${NC}"
+            # USB mode: manually restart service using rknn3_startup start
+            echo -e "${YELLOW}   USB mode: executing rknn3_startup start${NC}"
+            rknn3_startup start 2>/dev/null
         else
             # Unknown mode: try rknn3_startup start as fallback
-            echo -e "${YELLOW}   Unknown communication mode, attempting rknn3_startup start${NC}"
+            echo -e "${YELLOW}   Unknown communication mode, executing rknn3_startup start${NC}"
             rknn3_startup start 2>/dev/null
         fi
 
         # Additional wait for system to stabilize
-        echo -e "${GREEN}5. Waiting 2 seconds for system to stabilize...${NC}"
-        sleep 2
+        echo -e "${GREEN}5. Waiting 5 seconds for system to stabilize...${NC}"
+        sleep 5
 
         # Step 6: Verify reset success
         echo -e "${GREEN}6. Verifying reset success for device $device_id...${NC}"
@@ -920,7 +944,7 @@ hardware_reset_test() {
 
     echo -e "Completed iterations: $((current_iteration - 1))"
     echo -e "${GREEN}Successful resets: $successful_resets${NC}"
-    echo -e "Reset type used: $reset_type"
+    echo -e "Reset type used: $reset_type_display"
 
     if [[ $failed_resets -gt 0 ]]; then
         echo -e "${RED}Failed resets: $failed_resets${NC}"
@@ -984,7 +1008,7 @@ perform_smi_test() {
     local device_id="$1"
     local test_type="${2:-comprehensive}"  # Default to comprehensive if not specified
     local loop_count="${3:-1}"             # Default to 1 for reset tests
-    local reset_type="${4:-hw}"            # Default to hardware reset
+    local reset_type="${4:-}"              # Default to empty, will be determined by communication mode
 
     case "$test_type" in
         "comprehensive")
@@ -1213,13 +1237,16 @@ record_smi_config() {
 #   1. killall killing processes on all devices
 #   2. Lock contention causing stuck detection
 #
+# Reset type is automatically determined based on communication mode:
+#   - PCIe devices: use hardware reset (hw)
+#   - USB devices: use normal reset (no hw parameter)
+#
 # Usage: multi_device_round_robin_reset_test <device_configs>
-#   device_configs format: "device_id:loop_count:reset_type" for each device, space-separated
-#   Example: "0:100:hw 1:100:hw 2:50:hw"
+#   device_configs format: "device_id:loop_count" for each device, space-separated
+#   Example: "0:100 1:100 2:50"
 #
 multi_device_round_robin_reset_test() {
     local device_configs="$1"
-    local reset_type="${2:-hw}"  # Default to hardware reset
 
     echo -e "${CYAN}=== Starting Multi-Device Round-Robin Reset Test ===${NC}"
     echo
@@ -1239,6 +1266,7 @@ multi_device_round_robin_reset_test() {
     declare -a COMM_MODES
     declare -a BUS_ADDR_SN
     declare -a COMPLETED_FLAGS
+    declare -a RESET_TYPES  # Store reset type for each device based on comm mode
 
     local device_count=0
     local max_rounds=0
@@ -1300,19 +1328,35 @@ multi_device_round_robin_reset_test() {
         COMM_MODES[$device_count]="$comm_mode"
         BUS_ADDR_SN[$device_count]="$bus_addr_or_sn"
 
+        # Determine reset type based on communication mode
+        local device_reset_type
+        if [[ "$comm_mode" == "PCIe" ]]; then
+            device_reset_type="hw"
+        elif [[ "$comm_mode" == "USB" ]]; then
+            device_reset_type=""  # Normal reset for USB
+        else
+            device_reset_type=""  # Default to normal reset for unknown modes
+        fi
+        RESET_TYPES[$device_count]="$device_reset_type"
+
         ((device_count++))
     done
 
     # Display test configuration
     echo -e "${YELLOW}Test Configuration:${NC}"
     echo -e "${YELLOW}  Total devices: $device_count${NC}"
-    echo -e "${YELLOW}  Reset type: $reset_type${NC}"
     for i in "${!DEVICE_IDS[@]}"; do
         local loop_str="${LOOP_COUNTS[$i]}"
         if [[ "${LOOP_COUNTS[$i]}" -eq 0 ]]; then
             loop_str="infinite"
         fi
-        echo -e "${YELLOW}  Device ${DEVICE_IDS[$i]}: ${loop_str} iterations, Communication: ${COMM_MODES[$i]:-UNKNOWN}${NC}"
+        local reset_type_str
+        if [[ "${RESET_TYPES[$i]}" == "hw" ]]; then
+            reset_type_str="hardware reset (hw)"
+        else
+            reset_type_str="normal reset"
+        fi
+        echo -e "${YELLOW}  Device ${DEVICE_IDS[$i]}: ${loop_str} iterations, Communication: ${COMM_MODES[$i]:-UNKNOWN}, Reset: ${reset_type_str}${NC}"
     done
     echo
 
@@ -1346,6 +1390,7 @@ multi_device_round_robin_reset_test() {
             local current_count="${CURRENT_COUNTS[$i]}"
             local comm_mode="${COMM_MODES[$i]}"
             local bus_addr_or_sn="${BUS_ADDR_SN[$i]}"
+            local reset_type="${RESET_TYPES[$i]}"  # Use device-specific reset type
 
             # Check if this device has completed its iterations
             if [[ "${COMPLETED_FLAGS[$i]}" == "true" ]]; then
@@ -1360,7 +1405,15 @@ multi_device_round_robin_reset_test() {
                 continue
             fi
 
-            echo -e "${BLUE}--- [Device $device_id] Reset iteration $((current_count + 1)) ---${NC}"
+            # Display reset type being used
+            local reset_type_display
+            if [[ "$reset_type" == "hw" ]]; then
+                reset_type_display="hardware reset (hw)"
+            else
+                reset_type_display="normal reset"
+            fi
+
+            echo -e "${BLUE}--- [Device $device_id] Reset iteration $((current_count + 1)) (${reset_type_display}) ---${NC}"
 
             # Step 1: Clean up processes for this device
             echo -e "${GREEN}1. Cleaning up processes for device $device_id...${NC}"
@@ -1376,10 +1429,10 @@ multi_device_round_robin_reset_test() {
             fi
             sleep 1
 
-            # Step 2: Execute reset
-            echo -e "${GREEN}2. Executing reset for device $device_id...${NC}"
+            # Step 2: Execute reset with device-specific reset type
+            echo -e "${GREEN}2. Executing reset for device $device_id (${reset_type_display})...${NC}"
             local reset_ret=0
-            rknn-smi reset -d "$device_id" -t "$reset_type" 2>/dev/null
+            execute_reset "$device_id" "$reset_type"
             reset_ret=$?
 
             if [[ $reset_ret -ne 0 ]]; then
@@ -1396,10 +1449,13 @@ multi_device_round_robin_reset_test() {
             # Step 4: Service recovery
             echo -e "${GREEN}4. Service recovery...${NC}"
             if [[ "$comm_mode" == "PCIe" ]]; then
+                echo -e "${YELLOW}   PCIe mode: executing rknn3_startup start${NC}"
                 rknn3_startup start 2>/dev/null
             elif [[ "$comm_mode" == "USB" ]]; then
-                echo -e "${YELLOW}   USB mode: waiting for udev auto-detection${NC}"
+                echo -e "${YELLOW}   USB mode: executing rknn3_startup start${NC}"
+                rknn3_startup start 2>/dev/null
             else
+                echo -e "${YELLOW}   Unknown mode: executing rknn3_startup start${NC}"
                 rknn3_startup start 2>/dev/null
             fi
 
@@ -1464,6 +1520,16 @@ multi_device_round_robin_reset_test() {
         local loop_count="${LOOP_COUNTS[$i]}"
         local successful="${SUCCESSFUL_COUNTS[$i]}"
         local failed="${FAILED_COUNTS[$i]}"
+        local reset_type="${RESET_TYPES[$i]}"
+        local comm_mode="${COMM_MODES[$i]}"
+
+        # Display reset type in readable format
+        local reset_type_display
+        if [[ "$reset_type" == "hw" ]]; then
+            reset_type_display="hardware reset (hw)"
+        else
+            reset_type_display="normal reset"
+        fi
 
         echo -e "${CYAN}Device $device_id:${NC}"
         if [[ "$loop_count" -eq 0 ]]; then
@@ -1471,6 +1537,8 @@ multi_device_round_robin_reset_test() {
         else
             echo -e "  Target: $loop_count iterations"
         fi
+        echo -e "  Communication Mode: ${comm_mode:-UNKNOWN}"
+        echo -e "  Reset Type Used: $reset_type_display"
         echo -e "  Completed: ${CURRENT_COUNTS[$i]} iterations"
         echo -e "${GREEN}  Successful: $successful${NC}"
 
