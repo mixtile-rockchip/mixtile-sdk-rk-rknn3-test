@@ -19,23 +19,21 @@
 #include "rknn3_api.h"
 #include "common.h"
 
-#define MAX_SHAPE_ID        10
-
 // Generic audio encoder context that can support different audio encoder models
 typedef struct {
     rknn3_context rknn_ctx;
     rknn3_input_output_num io_num;
-    int n_shapes;
-    rknn3_shape_info *shape_infos;
     rknn3_tensor* inputs;
     rknn3_tensor* outputs;
 
+    int batch_size;
+    int window_size;
     int n_mels;
-    int n_frame[MAX_SHAPE_ID];
-    int padded_mask_size[MAX_SHAPE_ID];
-    int attn_mask_size[MAX_SHAPE_ID];
-    int embeds_dim0[MAX_SHAPE_ID];
-    int embeds_dim1;
+
+    uint32_t* embeds_shape;
+    uint32_t embeds_ndims;
+
+    char mel_filters_path[512];
 
     uint32_t device_id;
 } rknn_audio_encoder_context;
@@ -49,23 +47,8 @@ int release_audio_encoder(rknn_audio_encoder_context* audio_ctx);
 // Calculate number of audio tokens/embeddings from audio length
 int get_n_audio_tokens(rknn_audio_encoder_context* audio_ctx, int audio_len);
 
-// Prepare audio input (preprocessing, should be called once before inference loop)
-// This function does: mel filter extraction, audio preprocessing, mask creation, fp16 conversion
-int prepare_audio_input(rknn_audio_encoder_context* audio_ctx, audio_buffer_t* audio);
-
-// Run audio encoder model inference (only mem_sync + rknn3_run, for performance testing in loop)
-int inference_audio_encoder(rknn_audio_encoder_context* audio_ctx);
-
-// Run audio encoder model inference without mem_sync (only rknn3_run, for hiding transfer latency)
-int inference_audio_encoder_no_sync(rknn_audio_encoder_context* audio_ctx);
-
-// Sync audio input to device (call once before inference_audio_encoder_no_sync loop)
-int sync_audio_input(rknn_audio_encoder_context* audio_ctx);
-
-// Sync audio output from device (call once after inference_audio_encoder_no_sync loop)
-int sync_audio_output(rknn_audio_encoder_context* audio_ctx);
-
-// Get audio embeddings from output buffer (call once after inference loop)
-int get_audio_embeds(rknn_audio_encoder_context* audio_ctx, audio_buffer_t* audio, float16* audio_embeds);
+// Run chunked audio encoder inference (preprocess + NCHW chunked loop + embeds output)
+// audio_embeds must be pre-allocated with enough space for get_n_audio_tokens() * embeds_dim
+int inference_audio_encoder(rknn_audio_encoder_context* audio_ctx, audio_buffer_t* audio, float16* audio_embeds);
 
 #endif //_RKNN_DEMO_QWEN2_5_OMNI_AUDIO_UTILS_H_

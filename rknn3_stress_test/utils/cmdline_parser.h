@@ -78,6 +78,10 @@ typedef struct {
     // Audio specific
     char *audio_path;
 
+    // Accuracy test specific
+    char *golden_path;
+    float similarity_threshold;
+
     // User parameters storage
     void *user_params;
 } cmdline_args_t;

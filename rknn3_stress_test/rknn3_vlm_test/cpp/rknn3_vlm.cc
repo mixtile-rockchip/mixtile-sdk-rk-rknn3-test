@@ -21,73 +21,54 @@
 
 #include "common.h"
 #include "image_utils.h"
+#include "audio_utils.h"
+#include "Tokenizer.h"
+#include "float16.h"
 
 // External variables from main.cc
 // extern int32_t gen_tokens;
 // internal memory is not counted
-static int64_t get_model_memory(rknn_app_context_t *app_ctx) {
-    // internal memory is not counted
-    int64_t tot_memory = 0;
-    // Query model required core number
+static int64_t query_model_memory(rknn3_context ctx, const char *label) {
+    int64_t memory = 0;
     uint32_t model_core_num = 0;
-    int ret = 0;
-    ret = rknn3_query(app_ctx->vision.rknn_ctx, RKNN3_QUERY_CORE_NUMBER, &model_core_num, sizeof(model_core_num));
+    int ret = rknn3_query(ctx, RKNN3_QUERY_CORE_NUMBER, &model_core_num, sizeof(model_core_num));
     if (ret < 0) {
         printf("[rknn3_model_stress_test_error] rknn3_query core number failed! ret=%d\n", ret);
-        rknn3_destroy(app_ctx->vision.rknn_ctx);
         return -1;
     }
 
     rknn3_allocation_info *allocation_info = (rknn3_allocation_info *)malloc(sizeof(rknn3_allocation_info) * model_core_num);
-    ret = rknn3_query(app_ctx->vision.rknn_ctx, RKNN3_QUERY_ALLOCATION_INFO, allocation_info, sizeof(rknn3_allocation_info) * model_core_num);
+    ret = rknn3_query(ctx, RKNN3_QUERY_ALLOCATION_INFO, allocation_info, sizeof(rknn3_allocation_info) * model_core_num);
     if (ret < 0) {
         printf("rknn3_query allocation info failed! ret=%d\n", ret);
+        free(allocation_info);
         return ret;
     }
-    printf("vision model mem.\n");
-    // printf("allocation_info[i].weight_mem.size: %d\n",allocation_info[0].weight_mem.size);
+    printf("%s model mem.\n", label);
     for (int i = 0; i < model_core_num; i++) {
-        // printf("id:%d,allocation_info.weights_size=%d, allocation_info.internal_size=%d, allocation_info.weights_mem_size=%d, allocation_info.internal_mem_size=%d\n",
-        //     i,allocation_info[i].weight_mem.size / 1024/1024, allocation_info[i].internal_mem.size/1024/1024,
-        //     allocation_info[i].command_mem.size/1024/1024, allocation_info[i].kvcache_mem.size/1024/1024);
-        tot_memory += allocation_info[i].weight_mem.size;
-        // tot_memory += allocation_info[i].internal_mem.size;
-        tot_memory += allocation_info[i].command_mem.size;
-        tot_memory += allocation_info[i].kvcache_mem.size;
+        memory += allocation_info[i].weight_mem.size;
+        memory += allocation_info[i].command_mem.size;
+        memory += allocation_info[i].kvcache_mem.size;
     }
-    if (allocation_info) {
-        free(allocation_info);
-        allocation_info = NULL;
-    }
+    free(allocation_info);
+    return memory;
+}
 
-    ret = rknn3_query(app_ctx->llm.rknn_ctx, RKNN3_QUERY_CORE_NUMBER, &model_core_num, sizeof(model_core_num));
-    if (ret < 0) {
-        printf("[rknn3_model_stress_test_error] rknn3_query core number failed! ret=%d\n", ret);
-        rknn3_destroy(app_ctx->llm.rknn_ctx);
-        return -1;
-    }
+static int64_t get_model_memory(rknn_app_context_t *app_ctx) {
+    int64_t tot_memory = 0;
+    int64_t mem;
 
-    allocation_info = (rknn3_allocation_info *)malloc(sizeof(rknn3_allocation_info) * model_core_num);
-    ret = rknn3_query(app_ctx->llm.rknn_ctx, RKNN3_QUERY_ALLOCATION_INFO, allocation_info, sizeof(rknn3_allocation_info) * model_core_num);
-    if (ret < 0) {
-        printf("rknn3_query allocation info failed! ret=%d\n", ret);
-        return ret;
-    }
-    printf("llm model mem.\n");
-    // printf("allocation_info[i].weight_mem.size: %d\n",allocation_info[0].weight_mem.size);
-    for (int i = 0; i < model_core_num; i++) {
-        // printf("id:%d,allocation_info.weights_size=%d, allocation_info.internal_size=%d, allocation_info.weights_mem_size=%d, allocation_info.internal_mem_size=%d\n",
-        //     i,allocation_info[i].weight_mem.size / 1024/1024, allocation_info[i].internal_mem.size/1024/1024,
-        //     allocation_info[i].command_mem.size/1024/1024, allocation_info[i].kvcache_mem.size/1024/1024);
-        tot_memory += allocation_info[i].weight_mem.size;
-        // tot_memory += allocation_info[i].internal_mem.size;
-        tot_memory += allocation_info[i].command_mem.size;
-        tot_memory += allocation_info[i].kvcache_mem.size;
-    }
-    if (allocation_info) {
-        free(allocation_info);
-        allocation_info = NULL;
-    }
+    // Query encoder model memory (vision or audio)
+    rknn3_context encoder_ctx = app_ctx->audio.rknn_ctx ? app_ctx->audio.rknn_ctx : app_ctx->vision.rknn_ctx;
+    const char *encoder_label = app_ctx->audio.rknn_ctx ? "audio" : "vision";
+    mem = query_model_memory(encoder_ctx, encoder_label);
+    if (mem < 0) return mem;
+    tot_memory += mem;
+
+    // Query LLM model memory
+    mem = query_model_memory(app_ctx->llm.rknn_ctx, "llm");
+    if (mem < 0) return mem;
+    tot_memory += mem;
 
     return tot_memory;
 }
@@ -464,5 +445,325 @@ int inference_rknn3_vlm_model(rknn_app_context_t *app_ctx,
 
     // }
 
+    return ret;
+}
+
+// ===================== ASR mode functions =====================
+
+// ASR-specific internal memory share, based on model-zoo's qwen3_asr.cc implementation.
+// Unlike VLM's init_internal_share which uses app_ctx->vision, this uses app_ctx->audio directly.
+static int init_asr_internal_share(rknn_app_context_t *app_ctx, uint32_t core_mask_audio, uint32_t core_mask_llm)
+{
+    int ret = -1;
+
+    uint32_t core_num_audio = 0;
+    uint32_t core_num_llm = 0;
+    ret = rknn3_query(app_ctx->audio.rknn_ctx, RKNN3_QUERY_CORE_NUMBER, &core_num_audio, sizeof(core_num_audio));
+    if (ret < 0) {
+        printf("rknn3_query audio core number failed! ret=%d\n", ret);
+        return ret;
+    }
+    ret = rknn3_query(app_ctx->llm.rknn_ctx, RKNN3_QUERY_CORE_NUMBER, &core_num_llm, sizeof(core_num_llm));
+    if (ret < 0) {
+        printf("rknn3_query llm core number failed! ret=%d\n", ret);
+        return ret;
+    }
+
+    rknn3_core_mem_size *core_mem_sizes_audio = (rknn3_core_mem_size *)malloc(sizeof(rknn3_core_mem_size) * core_num_audio);
+    if (!core_mem_sizes_audio) {
+        printf("Failed to allocate memory for core_mem_sizes_audio\n");
+        return -1;
+    }
+    rknn3_core_mem_size *core_mem_sizes_llm = (rknn3_core_mem_size *)malloc(sizeof(rknn3_core_mem_size) * core_num_llm);
+    if (!core_mem_sizes_llm) {
+        printf("Failed to allocate memory for core_mem_sizes_llm\n");
+        free(core_mem_sizes_audio);
+        return -1;
+    }
+    ret = rknn3_query(app_ctx->audio.rknn_ctx, RKNN3_QUERY_CORE_MEM_SIZE, core_mem_sizes_audio, sizeof(rknn3_core_mem_size) * core_num_audio);
+    if (ret < 0) {
+        printf("rknn3_query audio core memory size failed! ret=%d\n", ret);
+        free(core_mem_sizes_audio);
+        free(core_mem_sizes_llm);
+        return ret;
+    }
+    ret = rknn3_query(app_ctx->llm.rknn_ctx, RKNN3_QUERY_CORE_MEM_SIZE, core_mem_sizes_llm, sizeof(rknn3_core_mem_size) * core_num_llm);
+    if (ret < 0) {
+        printf("rknn3_query llm core memory size failed! ret=%d\n", ret);
+        free(core_mem_sizes_audio);
+        free(core_mem_sizes_llm);
+        return ret;
+    }
+
+    g_vlm_perf.tot_memory += get_model_memory(app_ctx);
+
+    // Use the max internal_size for each core (matching model-zoo logic)
+    rknn3_core_mem_size *core_mem_sizes_max = core_mem_sizes_audio;
+    uint32_t core_num_max = core_num_audio;
+
+    if (core_num_max >= core_num_llm) {
+        for (uint32_t i = 0; i < core_num_llm; i++) {
+            core_mem_sizes_max[i].internal_size = std::max(core_mem_sizes_max[i].internal_size, core_mem_sizes_llm[i].internal_size);
+        }
+    } else {
+        for (uint32_t i = 0; i < core_num_max; i++) {
+            core_mem_sizes_llm[i].internal_size = std::max(core_mem_sizes_llm[i].internal_size, core_mem_sizes_max[i].internal_size);
+        }
+        core_mem_sizes_max = core_mem_sizes_llm;
+        core_num_max = core_num_llm;
+    }
+
+    app_ctx->internal_mems = (rknn3_tensor_mem **)malloc(sizeof(rknn3_tensor_mem *) * core_num_max);
+    if (!app_ctx->internal_mems) {
+        printf("Failed to allocate memory for app_ctx->internal_mems array\n");
+        free(core_mem_sizes_audio);
+        free(core_mem_sizes_llm);
+        return -1;
+    }
+    app_ctx->n_internal_mems = core_num_max;
+
+    for (uint32_t i = 0; i < core_num_max; i++) {
+        if (core_mem_sizes_max[i].internal_size > 0) {
+            app_ctx->internal_mems[i] = rknn3_create_mem(app_ctx->llm.rknn_ctx, core_mem_sizes_max[i].internal_size, core_mem_sizes_max[i].core_id, RKNN3_FLAG_MEMORY_CACHEABLE);
+            if (!app_ctx->internal_mems[i]) {
+                free(core_mem_sizes_audio);
+                free(core_mem_sizes_llm);
+                return -1;
+            }
+        }
+    }
+
+    free(core_mem_sizes_audio);
+    free(core_mem_sizes_llm);
+
+    ret = rknn3_set_internal_mem(app_ctx->audio.rknn_ctx, app_ctx->internal_mems, core_num_audio);
+    if (ret < 0) {
+        printf("rknn3_set_internal_mem for audio failed! ret=%d\n", ret);
+        return ret;
+    }
+    ret = rknn3_set_internal_mem(app_ctx->llm.rknn_ctx, app_ctx->internal_mems, core_num_llm);
+    if (ret < 0) {
+        printf("rknn3_set_internal_mem for llm failed! ret=%d\n", ret);
+        return ret;
+    }
+
+    return ret;
+}
+
+int init_rknn3_asr_model(rknn_app_context_t *app_ctx,
+                         const char *llm_model_path, const char *llm_weight_path,
+                         const char *audio_model_path, const char *audio_weight_path,
+                         rknn3_llm_param *params, int n_params,
+                         RKLLMCallback callback,
+                         uint32_t audio_core_mask, uint32_t llm_core_mask,
+                         Tokenizer *tokenizer,
+                         float16 *embed_data, int embedding_dim, int vocab_size) {
+    int ret = 0;
+    if (audio_core_mask == 0 || llm_core_mask == 0) {
+        printf("[rknn3_stress_test_log] core_mask=0, auto-generate mask from model core number\n");
+    }
+
+    // Set device_id for audio encoder
+    app_ctx->audio.device_id = app_ctx->device_id;
+
+    printf("--> init rknn3_asr audio model\n");
+    g_vlm_perf.load_vision_model.tik();
+    ret = init_audio_encoder(&(app_ctx->audio), audio_model_path, audio_weight_path, audio_core_mask);
+    if (ret < 0) {
+        printf("[rknn3_model_stress_test_error] init audio encoder fail! ret=%d\n", ret);
+        return ret;
+    }
+    g_vlm_perf.load_vision_model.tok();
+
+    printf("--> init rknn3_asr llm model\n");
+    g_vlm_perf.load_llm_model.tik();
+    ret = init_rknn3_vlm_llm(&(app_ctx->llm), llm_model_path, llm_weight_path, params, n_params, callback, llm_core_mask);
+    if (ret < 0) {
+        printf("[rknn3_model_stress_test_error] init rknn3_asr llm model fail! ret=%d\n", ret);
+        return ret;
+    }
+    g_vlm_perf.load_llm_model.tok();
+
+    printf("--> init internal share\n");
+    ret = init_asr_internal_share(app_ctx, audio_core_mask, llm_core_mask);
+    if (ret < 0) {
+        printf("[rknn3_model_stress_test_error] llm/audio internal memory share fail! ret=%d\n", ret);
+        return ret;
+    }
+
+    // Prepare prefix embeds: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\n" + AUDIO_START_TOKEN
+    const char *prefix_text = "<|im_start|>system\n<|im_end|>\n<|im_start|>user\n";
+    int32_t prefix_tokens[ASR_PREFIX_N_TOKENS];
+    tokenizer->Tokenize(prefix_text, strlen(prefix_text), prefix_tokens, ASR_PREFIX_N_TOKENS);
+    prefix_tokens[ASR_PREFIX_N_TOKENS - 1] = ASR_AUDIO_START_TOKEN;
+
+    app_ctx->prefix_embeds = (float16 *)malloc(ASR_PREFIX_N_TOKENS * embedding_dim * sizeof(float16));
+    for (int i = 0; i < ASR_PREFIX_N_TOKENS; i++) {
+        memcpy(app_ctx->prefix_embeds + i * embedding_dim,
+               embed_data + prefix_tokens[i] * embedding_dim,
+               embedding_dim * sizeof(float16));
+    }
+
+    // Prepare postfix embeds: AUDIO_END_TOKEN + "<|im_end|>\n<|im_start|>assistant\n"
+    int32_t postfix_tokens[ASR_POSTFIX_N_TOKENS];
+    const char *postfix_text = "<|im_end|>\n<|im_start|>assistant\n";
+    tokenizer->Tokenize(postfix_text, strlen(postfix_text), postfix_tokens + 1, ASR_POSTFIX_N_TOKENS);
+    postfix_tokens[0] = ASR_AUDIO_END_TOKEN;
+
+    app_ctx->postfix_embeds = (float16 *)malloc(ASR_POSTFIX_N_TOKENS * embedding_dim * sizeof(float16));
+    for (int i = 0; i < ASR_POSTFIX_N_TOKENS; i++) {
+        memcpy(app_ctx->postfix_embeds + i * embedding_dim,
+               embed_data + postfix_tokens[i] * embedding_dim,
+               embedding_dim * sizeof(float16));
+    }
+
+    return ret;
+}
+
+int release_rknn3_asr_model(rknn_app_context_t *app_ctx) {
+    release_internal_share(app_ctx);
+    release_audio_encoder(&(app_ctx->audio));
+    release_rknn3_vlm_llm(&(app_ctx->llm));
+
+    if (app_ctx->prefix_embeds) {
+        free(app_ctx->prefix_embeds);
+        app_ctx->prefix_embeds = nullptr;
+    }
+    if (app_ctx->postfix_embeds) {
+        free(app_ctx->postfix_embeds);
+        app_ctx->postfix_embeds = nullptr;
+    }
+    return 0;
+}
+
+int inference_rknn3_asr_model(rknn_app_context_t *app_ctx,
+                              audio_buffer_t *audio,
+                              int llm_loop, float time_loop) {
+    int ret;
+
+    if (!app_ctx || !audio) {
+        printf("[rknn3_model_stress_test_error] app_ctx or audio is NULL\n");
+        return -1;
+    }
+
+    // Truncate audio if too long
+    if (audio->sample_rate > 0) {
+        int max_audio_frames = audio->sample_rate * ASR_MAX_AUDIO_SECONDS;
+        if (audio->num_frames > max_audio_frames) {
+            printf("audio is longer than %d seconds, truncate from %.2f s to %.2f s\n",
+                   ASR_MAX_AUDIO_SECONDS,
+                   (float)audio->num_frames / audio->sample_rate,
+                   (float)max_audio_frames / audio->sample_rate);
+            audio->num_frames = max_audio_frames;
+        }
+    }
+
+    // Get number of audio tokens and embedding dimension
+    int n_audio_tokens = get_n_audio_tokens(&(app_ctx->audio), audio->num_frames);
+    int embedding_dim = app_ctx->audio.embeds_shape[1];
+    size_t n_tokens = n_audio_tokens + ASR_PREFIX_N_TOKENS + ASR_POSTFIX_N_TOKENS;
+
+    printf("ASR: n_audio_tokens=%d, embedding_dim=%d, total_n_tokens=%zu\n", n_audio_tokens, embedding_dim, n_tokens);
+
+    // Allocate buffers outside loop (reused each iteration)
+    float16 *audio_embeds = (float16 *)malloc(n_audio_tokens * embedding_dim * sizeof(float16));
+    if (!audio_embeds) {
+        printf("[rknn3_model_stress_test_error] malloc audio_embeds failed\n");
+        return -1;
+    }
+
+    float16 *embed = (float16 *)malloc(n_tokens * embedding_dim * sizeof(float16));
+    if (!embed) {
+        printf("[rknn3_model_stress_test_error] malloc embed failed\n");
+        free(audio_embeds);
+        return -1;
+    }
+
+    // Build LLM input tensor (embed-based)
+    rknn3_llm_tensor tensor;
+    memset(&tensor, 0, sizeof(rknn3_llm_tensor));
+    tensor.name = NULL;
+    tensor.prompt = NULL;
+    tensor.embed = embed;
+    tensor.tokens = NULL;
+    tensor.n_tokens = n_tokens;
+    tensor.enable_thinking = false;
+
+    rknn3_llm_input llm_input;
+    memset(&llm_input, 0, sizeof(llm_input));
+    llm_input.input_type = RKNN3_LLM_INPUT_EMBED;
+    llm_input.llm_input = tensor;
+
+    rknn3_llm_infer_param llm_infer_param;
+    memset(&llm_infer_param, 0, sizeof(llm_infer_param));
+    llm_infer_param.keep_history = 0;
+    llm_infer_param.max_new_tokens = ASR_MAX_NEW_TOKENS;
+
+    bool is_time_mode = (time_loop != 0);
+    float time_limit_ms = is_time_mode ? (float)time_loop * 3600.0f * 1000.0f : 0;
+    int iter = 0;
+    int acc_cnt = 0;
+    float acc_ms = 0.f;
+    float print_interval = 1 * 1000 * 40;  // 40s
+    TIMER one_infer_time;
+
+    g_vlm_perf.infer_cost_time.tik();
+    g_vlm_perf.vl_cost.tik();
+
+    while (true) {
+        one_infer_time.tik();
+
+        // Run audio encoder inference
+        g_vlm_perf.vision_cost.tik();
+        ret = inference_audio_encoder(&(app_ctx->audio), audio, audio_embeds);
+        g_vlm_perf.vision_cost.tok();
+        if (ret != 0) {
+            printf("[rknn3_model_stress_test_error] audio encoder inference fail! ret=%d\n", ret);
+            free(audio_embeds);
+            free(embed);
+            return ret;
+        }
+
+        // Concatenate: prefix + audio + postfix
+        memcpy(embed, app_ctx->prefix_embeds, ASR_PREFIX_N_TOKENS * embedding_dim * sizeof(float16));
+        memcpy(embed + ASR_PREFIX_N_TOKENS * embedding_dim, audio_embeds, n_audio_tokens * embedding_dim * sizeof(float16));
+        memcpy(embed + (ASR_PREFIX_N_TOKENS + n_audio_tokens) * embedding_dim,
+               app_ctx->postfix_embeds, ASR_POSTFIX_N_TOKENS * embedding_dim * sizeof(float16));
+
+        // Run LLM inference
+        g_vlm_perf.llm_perfill.tik();
+        ret = rknn3_session_run(app_ctx->llm.rknn_sess, &llm_input, 1, &llm_infer_param);
+        if (ret < 0) {
+            printf("[rknn3_model_stress_test_error] rknn_session_run fail! ret=%d\n", ret);
+            free(audio_embeds);
+            free(embed);
+            return ret;
+        }
+
+        iter++;
+        g_vlm_perf.infer_loop_cnt = iter;
+        g_vlm_perf.infer_cost_time.tok();
+        float current_total_ms = g_vlm_perf.infer_cost_time.get_time();
+        one_infer_time.tok();
+        acc_cnt++;
+        acc_ms += one_infer_time.get_time();
+
+        if (acc_ms >= print_interval) {
+            printf("run_cnt: %d, run cost: %8.2f ms\n", iter, current_total_ms);
+            acc_cnt = 0;
+            acc_ms = 0.0f;
+        }
+
+        if (is_time_mode) {
+            if (current_total_ms >= time_limit_ms)
+                break;
+        } else {
+            if (iter >= llm_loop)
+                break;
+        }
+    }
+
+    free(audio_embeds);
+    free(embed);
     return ret;
 }

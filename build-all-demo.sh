@@ -62,7 +62,7 @@ fi
 ROOT_PWD=$( cd "$( dirname $0 )" && pwd )
 # Modify the installation root directory: Consolidate it under the same install/ platform name
 # Add chip name to distinguish different platforms
-FINAL_INSTALL_DIR=${ROOT_PWD}/install/aicp_test_${TARGET_SOC}_${TARGET_ARCH}
+FINAL_INSTALL_DIR=${ROOT_PWD}/install/aicp_test_${TARGET_ARCH}
 
 echo "==========================================="
 echo "Start batch compilation: ${DEMO_LIST[*]}"

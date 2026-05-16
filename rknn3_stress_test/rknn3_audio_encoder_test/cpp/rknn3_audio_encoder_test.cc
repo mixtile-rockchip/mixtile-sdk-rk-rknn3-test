@@ -55,8 +55,6 @@ void check_performance(float last_latency, float cur_latency, int iter) {
         fprintf(stderr, RKNN3_AUDIO_ENC_WRN "Perf jitter %.2f%% exceeds 20%% at iteration %d (last=%.2f, cur=%.2f)\n",
                 ratio * 100, iter, last_latency, cur_latency);
     }
-    // fprintf(stderr, RKNN3_AUDIO_ENC_LOG "the ratio is %.2f%% at iteration %d (last=%.2f, cur=%.2f)\n",
-    //     ratio * 100, iter, last_latency, cur_latency);
 }
 
 int init_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
@@ -79,11 +77,6 @@ int init_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     // ========================================================================
     // Manual Internal Memory Allocation (Required for user_mem_internal = 1)
     // ========================================================================
-    // When user_mem_internal = 1, we must manually allocate NPU internal memory
-    // (SRAM inside NPU cores) for model inference. This is required because:
-    // 1. Multi-model scenarios need to share internal memory
-    // 2. User has full control over memory allocation/deallocation
-    // 3. Can optimize memory usage across models
 
     // Step 1: Query how many NPU cores this model uses
     uint32_t core_num_audio = 0;
@@ -119,11 +112,10 @@ int init_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     // Step 4: Create internal memory for each NPU core
     for (uint32_t i = 0; i < core_num_audio; i++) {
         if (core_mem_sizes[i].internal_size > 0) {
-            // Allocate SRAM memory on specific NPU core
             internal_mems[i] = rknn3_create_mem(app_ctx->audio.rknn_ctx,
-                                                core_mem_sizes[i].internal_size,  // Size required by this core
-                                                core_mem_sizes[i].core_id,        // Which NPU core
-                                                RKNN3_FLAG_MEMORY_CACHEABLE);     // Cacheable memory
+                                                core_mem_sizes[i].internal_size,
+                                                core_mem_sizes[i].core_id,
+                                                RKNN3_FLAG_MEMORY_CACHEABLE);
             if (!internal_mems[i]) {
                 printf(RKNN3_AUDIO_ENC_ERR "Failed to create internal memory for core %d\n", core_mem_sizes[i].core_id);
                 free(core_mem_sizes);
@@ -135,14 +127,12 @@ int init_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
         }
     }
 
-    free(core_mem_sizes); // No longer needed after allocation
+    free(core_mem_sizes);
 
     // Step 5: Bind internal memory to RKNN context
-    // This tells the NPU driver to use these pre-allocated memory buffers
     ret = rknn3_set_internal_mem(app_ctx->audio.rknn_ctx, internal_mems, core_num_audio);
     if (ret < 0) {
         printf(RKNN3_AUDIO_ENC_ERR "rknn3_set_internal_mem failed! ret=%d\n", ret);
-        // Cleanup on failure
         for (uint32_t i = 0; i < core_num_audio; i++) {
             if (internal_mems[i]) {
                 rknn3_destroy_mem(app_ctx->audio.rknn_ctx, internal_mems[i]);
@@ -152,11 +142,9 @@ int init_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
         return ret;
     }
 
-    // Step 6: Store for later cleanup (must be freed in release function)
+    // Step 6: Store for later cleanup
     app_ctx->internal_mems = internal_mems;
     app_ctx->n_internal_mems = core_num_audio;
-
-    // ========================================================================
 
     // Set device ID string for reporting
     snprintf(app_ctx->device_id_mac, sizeof(app_ctx->device_id_mac), "device_%d", device_id);
@@ -167,7 +155,6 @@ int init_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
 int release_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx)
 {
     // Release internal memory (for user_mem_internal = 1)
-    // Must destroy internal memory BEFORE destroying context
     if (app_ctx->internal_mems) {
         for (int i = 0; i < app_ctx->n_internal_mems; i++) {
             if (app_ctx->internal_mems[i]) {
@@ -198,7 +185,7 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
 
     // Allocate audio embeddings buffer
     int n_audio_tokens = get_n_audio_tokens(&(app_ctx->audio), audio->num_frames);
-    int embedding_dim = app_ctx->audio.embeds_dim1;
+    int embedding_dim = app_ctx->audio.embeds_shape[1];
     size_t n_embed_audio = n_audio_tokens * embedding_dim;
     float16* audio_embeds = (float16*)malloc(n_embed_audio * sizeof(float16));
     if (!audio_embeds) {
@@ -208,30 +195,12 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
 
     printf("Output: %d audio tokens x %d embedding dim\n", n_audio_tokens, embedding_dim);
 
-
-    // Prepare audio input (preprocessing: mel filter, audio preprocess, mask creation, fp16 conversion)
-    // This is done ONCE before the performance test loop
-    ret = prepare_audio_input(&(app_ctx->audio), audio);
-    if (ret != 0) {
-        printf(RKNN3_AUDIO_ENC_ERR "Audio input preparation failed! ret=%d\n", ret);
-        free(audio_embeds);
-        return ret;
-    }
-
-    // Performance test mode selection:
-    // 0 = Include data transfer (sync_input + run + sync_output) - measures complete inference time
-    // 1 = Hide data transfer (only run) - measures pure NPU computation time
-    #define HIDE_DATA_TRANSFER 1
-
-    // ========== Option 1: Include data transfer latency (sync_input + run + sync_output) ==========
-    // This measures the complete inference time including data transfer between CPU and NPU
-    #if !HIDE_DATA_TRANSFER
     total_infer_timer.tik();
     int infer_cnt = 0;
-    int stable_cnt = 0;  // Count after warmup
+    int stable_cnt = 0;
     float time_loop_ms = time_loop * 60.f * 60.f * 1000.f;
     float acc_audio_time = 0.0f;
-    float stable_audio_time = 0.0f;  // Accumulate time after warmup
+    float stable_audio_time = 0.0f;
     float min_time = 1e9f;
     float max_time = 0.0f;
 
@@ -239,55 +208,9 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     float last_latency = 0.0f;
 
     while (1) {
-        // Audio inference: sync_input + rknn3_run + sync_output (includes data transfer latency)
+        // Full inference: preprocess + chunked NCHW inference + embeds output
         audio_encode_timer.tik();
-        ret = inference_audio_encoder(&(app_ctx->audio));
-        audio_encode_timer.tok();
-
-        if (ret != 0) {
-            printf(RKNN3_AUDIO_ENC_ERR "Audio inference failed! ret=%d\n", ret);
-            free(audio_embeds);
-            return ret;
-        }
-
-        // Get audio embeddings (CPU memcpy, outside timer for accurate NPU performance measurement)
-        ret = get_audio_embeds(&(app_ctx->audio), audio, audio_embeds);
-        if (ret != 0) {
-            printf(RKNN3_AUDIO_ENC_ERR "Failed to get audio embeds! ret=%d\n", ret);
-            free(audio_embeds);
-            return ret;
-        }
-
-        float this_time = audio_encode_timer.get_time();
-    #endif
-
-    // ========== Option 2: Hide data transfer latency (only rknn3_run) ==========
-    // This measures pure NPU inference time without data transfer overhead
-    #if HIDE_DATA_TRANSFER
-    // Sync input data to NPU once before the loop
-    ret = sync_audio_input(&(app_ctx->audio));
-    if (ret != 0) {
-        printf(RKNN3_AUDIO_ENC_ERR "Audio input sync failed! ret=%d\n", ret);
-        free(audio_embeds);
-        return ret;
-    }
-
-    total_infer_timer.tik();
-    int infer_cnt = 0;
-    int stable_cnt = 0;  // Count after warmup
-    float time_loop_ms = time_loop * 60.f * 60.f * 1000.f;
-    float acc_audio_time = 0.0f;
-    float stable_audio_time = 0.0f;  // Accumulate time after warmup
-    float min_time = 1e9f;
-    float max_time = 0.0f;
-
-    // For performance jitter check
-    float last_latency = 0.0f;
-
-    while (1) {
-        // Audio inference: only rknn3_run (hides data transfer latency)
-        audio_encode_timer.tik();
-        ret = inference_audio_encoder_no_sync(&(app_ctx->audio));
+        ret = inference_audio_encoder(&(app_ctx->audio), audio, audio_embeds);
         audio_encode_timer.tok();
 
         if (ret != 0) {
@@ -297,7 +220,6 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
         }
 
         float this_time = audio_encode_timer.get_time();
-    #endif
         acc_audio_time += this_time;
         infer_cnt++;
 
@@ -307,12 +229,9 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
 
         // Phase management
         if (infer_cnt < 10) {
-            // Warmup phase (1-9): just print
-            // printf("Warmup run %d/10: %.2f ms\n", infer_cnt, this_time);
+            // Warmup phase (1-9): just run
         } else if (infer_cnt == 10) {
             // End of warmup: reset min/max for production measurement
-            // printf("Warmup run %d/10: %.2f ms\n", infer_cnt, this_time);
-            // printf("Warmup complete. Resetting min/max for stable measurement...\n");
             min_time = this_time;
             max_time = this_time;
             last_latency = this_time;
@@ -339,24 +258,7 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
     float total_time = total_infer_timer.get_time();
     float avgCost = acc_audio_time / infer_cnt;
 
-    // Sync output data from NPU and get embeddings (only for Option 2)
-    #if HIDE_DATA_TRANSFER
-    ret = sync_audio_output(&(app_ctx->audio));
-    if (ret != 0) {
-        printf(RKNN3_AUDIO_ENC_ERR "Audio output sync failed! ret=%d\n", ret);
-        free(audio_embeds);
-        return ret;
-    }
-
-    ret = get_audio_embeds(&(app_ctx->audio), audio, audio_embeds);
-    if (ret != 0) {
-        printf(RKNN3_AUDIO_ENC_ERR "Failed to get audio embeds! ret=%d\n", ret);
-        free(audio_embeds);
-        return ret;
-    }
-    #endif
-
-    // Output format matches llm/vlm multi-line key-value format (after all library cleanup)
+    // Output format matches llm/vlm multi-line key-value format
     printf("\n===== Audio Encoder Test Results =====\n\n");
     printf("Model: %s\n", model_name);
     printf("DeviceID: %s\n", app_ctx->device_id_mac);
@@ -368,6 +270,6 @@ int inference_audio_encoder_test(rknn_audio_encoder_context_t* app_ctx,
 
     printf("\n=================================\n");
     free(audio_embeds);
-    
+
     return 0;
 }

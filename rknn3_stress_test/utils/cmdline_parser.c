@@ -63,6 +63,7 @@ void init_cmdline_args(cmdline_args_t *args) {
     args->vision_loop = DEFAULT_VISION_LOOP;
     args->llm_loop = DEFAULT_LLM_LOOP;
     args->model_folder = NULL;
+    args->similarity_threshold = 0.99f;
 }
 
 void free_cmdline_args(cmdline_args_t *args) {
@@ -85,6 +86,7 @@ void free_cmdline_args(cmdline_args_t *args) {
     FREE_IF_SET(args->llm_weight_path);
     FREE_IF_SET(args->prompt_ini_path);
     FREE_IF_SET(args->model_folder);
+    FREE_IF_SET(args->golden_path);
     FREE_IF_SET(args->user_params);
 }
 
@@ -152,20 +154,23 @@ void print_usage(const char *argv0, int program_type, const param_def_t *custom_
         printf("  -ctx, --max_context_len      Max context length\n");
         printf("  -ni, --n_input_tokens        Number of input tokens (default: 128)\n");
         printf("  -no, --max_new_tokens        Max new tokens (default: 128)\n");
+        printf("  -gp, --golden_path           Golden data directory for accuracy test\n");
+        printf("  -st, --similarity_threshold  Cosine similarity threshold (default: 0.99)\n");
     }
 
     // VLM specific
     if (program_type == PROGRAM_TYPE_VLM) {
-        printf("\nVLM Specific Parameters:\n");
-        printf("  -vm, --vision_model          Vision model path\n");
-        printf("  -vw, --vision_weight         Vision weight path\n");
+        printf("\nVLM/ASR Specific Parameters:\n");
+        printf("  -vm, --vision_model          Vision model path (ASR mode: audio encoder model)\n");
+        printf("  -vw, --vision_weight         Vision weight path (ASR mode: audio encoder weight)\n");
         printf("  -lm, --llm_model             LLM model path\n");
         printf("  -lw, --llm_weight            LLM weight path\n");
         printf("  -tk, --tokenizer             Tokenizer file path\n");
         printf("  -em, --embedding             Embedding file path\n");
-        printf("  -vc, --vision_core_mask      Vision core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
-        printf("  -lc, --llm_core_mask         LLM core mask (hex, e.g. 0x1,auto-generated when not specified)\n");
-        printf("  -im, --image_path            Image path\n");
+        printf("  -vc, --vision_core_mask      Vision core mask (ASR mode: audio encoder core mask)\n");
+        printf("  -lc, --llm_core_mask         LLM core mask\n");
+        printf("  -im, --image_path            Image path (VLM mode)\n");
+        printf("  -a,  --audio_path            Audio file path (ASR mode, triggers ASR mode)\n");
         printf("  -pi, --prompt_ini            Prompt INI file path\n");
         printf("  -vl, --vision_loop           Vision loop count (default: 1)\n");
         printf("  -ll, --llm_loop              LLM loop count (default: 1)\n");
@@ -310,6 +315,12 @@ int parse_cmdline_args(int argc, char **argv, cmdline_args_t *args) {
         } else if (param_matches(arg, "-no", "--max_new_tokens")) {
             args->max_new_tokens = atoi(value);
             i += 2;
+        } else if (param_matches(arg, "-gp", "--golden_path")) {
+            args->golden_path = strdup(value);
+            i += 2;
+        } else if (param_matches(arg, "-st", "--similarity_threshold")) {
+            args->similarity_threshold = (float)atof(value);
+            i += 2;
         }
         // VLM specific
         else if (param_matches(arg, "-vm", "--vision_model")) {
@@ -409,13 +420,15 @@ static void populate_args_from_folder(cmdline_args_t *args, program_type_t progr
             if (strstr(ent->d_name, ".rknn")) {
                 if (strstr(ent->d_name, "vision") || strstr(ent->d_name, "encoder")) {
                     SET_IF_NULL(args->vision_model_path, full_path);
-                } else if (strstr(ent->d_name, "llm") || strstr(ent->d_name, "decoder")) {
+                } else {
+                    // Fallback: any other .rknn file is treated as LLM model
                     SET_IF_NULL(args->llm_model_path, full_path);
                 }
             } else if (strstr(ent->d_name, ".weight")) {
                 if (strstr(ent->d_name, "vision") || strstr(ent->d_name, "encoder")) {
                     SET_IF_NULL(args->vision_weight_path, full_path);
-                } else if (strstr(ent->d_name, "llm") || strstr(ent->d_name, "decoder")) {
+                } else {
+                    // Fallback: any other .weight file is treated as LLM weight
                     SET_IF_NULL(args->llm_weight_path, full_path);
                 }
             } else if (strstr(ent->d_name, "tokenizer")) {

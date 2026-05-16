@@ -2,6 +2,10 @@
 #define _RKNN_MODEL_ZOO_AUDIO_UTILS_H_
 
 #ifdef __cplusplus
+#include <vector>
+#endif
+
+#ifdef __cplusplus
 
 extern "C" {
 #endif

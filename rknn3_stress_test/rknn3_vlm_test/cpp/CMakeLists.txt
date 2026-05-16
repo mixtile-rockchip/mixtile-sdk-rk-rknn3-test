@@ -34,9 +34,11 @@ file(GLOB SRCS ${CMAKE_CURRENT_SOURCE_DIR}/*.cc)
 
 include_directories(${CMAKE_SOURCE_DIR}/llm)
 include_directories(${CMAKE_SOURCE_DIR}/vision/)
+include_directories(${CMAKE_SOURCE_DIR}/../../rknn3_audio_encoder_test/cpp/audio/)
 
 set(llm_file llm/rknn3_vlm_llm.cc)
 set(vision_file vision/rknn3_vlm_vision.cc)
+set(audio_file ${CMAKE_CURRENT_SOURCE_DIR}/../../rknn3_audio_encoder_test/cpp/audio/rknn3_audio_encoder.cc)
 
 message(STATUS "LIBRKNNAPI = ${LIBRKNNAPI}")
 message(STATUS "LIBRKNNAPI_INCLUDES = ${LIBRKNNAPI_INCLUDES}")
@@ -48,6 +50,7 @@ add_executable(${PROJECT_NAME}
     rknn3_ini.cc
     ${llm_file}
     ${vision_file}
+    ${audio_file}
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -63,6 +66,7 @@ target_link_directories(${PROJECT_NAME} PRIVATE
 # Link with static librknnsmi.a (which includes chips_connect_rc_static and libpci)
 target_link_libraries(${PROJECT_NAME}
     imageutils
+    audioutils
     fileutils
     cmdlineparser
     ${LIBRKNNAPI}

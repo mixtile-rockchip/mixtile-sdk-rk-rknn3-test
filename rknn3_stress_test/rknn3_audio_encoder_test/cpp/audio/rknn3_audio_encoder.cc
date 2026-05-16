@@ -15,18 +15,38 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <string>
 #include <vector>
+#include <cmath>
 
 #include "rknn3_audio_encoder.h"
 #include "common.h"
 #include "file_utils.h"
-#include "image_utils.h"
 #include "audio_utils.h"
 
 // Include log macros from parent header
 #include "../rknn3_audio_encoder_test.h"
 
+#define HOP_LENGTH 160
+#define N_FFT 400
+#define MEL_FILTERS_PATH "mel_128_filters.txt"
+#define DOWN_SAMPLE_RATE 8
+
+static void dump_tensor_attr(rknn3_tensor_attr* attrs)
+{
+    std::string shape_str = "";
+    for (int j = 0; j < attrs->n_dims; j++) {
+        shape_str += std::to_string(attrs->shape[j]);
+        if (j < attrs->n_dims - 1) {
+            shape_str += ", ";
+        }
+    }
+    printf("  Tensor: name=%s, n_dims=%d, shape=[%s], layout=%s, dtype=%s, core_id=%d\n",
+           attrs->name, attrs->n_dims, shape_str.c_str(),
+           rknn3_get_layout_string(attrs->layout),
+           rknn3_get_type_string(attrs->dtype), attrs->core_id);
+}
 
 int init_audio_encoder(rknn_audio_encoder_context* audio_ctx, const char* model_path, const char* weight_path, uint32_t core_mask)
 {
@@ -35,7 +55,7 @@ int init_audio_encoder(rknn_audio_encoder_context* audio_ctx, const char* model_
     rknn3_config config;
     memset(&config, 0, sizeof(config));
     config.run_core_mask = core_mask;
-    config.user_mem_internal = 1; // Use user managed internal memory
+    config.user_mem_internal = 1;
 
     uint32_t device_id = audio_ctx->device_id;
 
@@ -56,8 +76,6 @@ int init_audio_encoder(rknn_audio_encoder_context* audio_ctx, const char* model_
     }
 
     printf(RKNN3_AUDIO_ENC_LOG "device[%d].id=%s\n", device_id, rknn3_devices.devices[device_id].id);
-#else
-    printf(RKNN3_AUDIO_ENC_LOG "SKIP_FIND_DEVICES enabled, skip rknn3_find_devices\n");
 #endif
 
     rknn3_init_extend init_extend = {0};
@@ -81,6 +99,26 @@ int init_audio_encoder(rknn_audio_encoder_context* audio_ctx, const char* model_
         return ret;
     }
 
+    // Resolve mel_filters_path: search from model directory, fallback to current directory
+    {
+        const char *last_slash = strrchr(model_path, '/');
+        if (last_slash) {
+            int dir_len = (int)(last_slash - model_path);
+            snprintf(audio_ctx->mel_filters_path, sizeof(audio_ctx->mel_filters_path),
+                     "%.*s/%s", dir_len, model_path, MEL_FILTERS_PATH);
+        } else {
+            snprintf(audio_ctx->mel_filters_path, sizeof(audio_ctx->mel_filters_path),
+                     "%s", MEL_FILTERS_PATH);
+        }
+        // Check if file exists in model directory
+        if (access(audio_ctx->mel_filters_path, F_OK) != 0) {
+            // Fallback to current directory
+            snprintf(audio_ctx->mel_filters_path, sizeof(audio_ctx->mel_filters_path),
+                     "%s", MEL_FILTERS_PATH);
+        }
+    }
+    printf(RKNN3_AUDIO_ENC_LOG "mel_filters_path=%s\n", audio_ctx->mel_filters_path);
+
     // Query and validate audio core_mask before model init
     uint32_t model_core_num = 0;
     ret = rknn3_query(ctx, RKNN3_QUERY_CORE_NUMBER, &model_core_num, sizeof(model_core_num));
@@ -89,31 +127,31 @@ int init_audio_encoder(rknn_audio_encoder_context* audio_ctx, const char* model_
         rknn3_destroy(ctx);
         return ret;
     }
-    printf(RKNN3_AUDIO_ENC_LOG "Audio model requires %u NPU cores\n", model_core_num);
-    printf(RKNN3_AUDIO_ENC_LOG "User specified audio_core_mask: 0x%x\n", core_mask);
+    printf(RKNN3_AUDIO_ENC_LOG "Audio model requires %u NPU cores, user core_mask: 0x%x\n", model_core_num, core_mask);
 
-    uint32_t core_num_from_mask = 0;
-    for (int i = 0; i < 32; i++) {
-        if (core_mask & (1 << i)) core_num_from_mask++;
+    if (core_mask == 0) {
+        for (uint32_t i = 0; i < model_core_num; i++) {
+            core_mask |= (1U << i);
+        }
+        printf("Auto-generated core_mask: 0x%x for %u cores\n", core_mask, model_core_num);
+        config.run_core_mask = core_mask;
+    } else {
+        uint32_t core_num_from_mask = 0;
+        for (int i = 0; i < 32; i++) {
+            if (core_mask & (1 << i)) core_num_from_mask++;
+        }
+        if (core_num_from_mask < model_core_num) {
+            printf(RKNN3_AUDIO_ENC_ERR "Audio core_mask 0x%x has %u cores, but model requires %u cores\n",
+                   core_mask, core_num_from_mask, model_core_num);
+            rknn3_destroy(ctx);
+            return -1;
+        }
     }
-
-    if (core_num_from_mask != model_core_num) {
-        printf(RKNN3_AUDIO_ENC_ERR "Audio core_mask 0x%x has %u cores, but model requires %u cores\n",
-               core_mask, core_num_from_mask, model_core_num);
-        printf(RKNN3_AUDIO_ENC_ERR "Please specify exactly %u cores for audio model\n", model_core_num);
-        rknn3_destroy(ctx);
-        return -1;
-    }
-    printf(RKNN3_AUDIO_ENC_LOG "Audio core mask validation passed (%u cores)\n", core_num_from_mask);
 
     // Init RKNN Model
     ret = rknn3_model_init(ctx, &config);
     if (ret < 0) {
         printf(RKNN3_AUDIO_ENC_ERR "rknn_model_init failed! ret=%d\n", ret);
-        printf(RKNN3_AUDIO_ENC_ERR "This may be due to:\n");
-        printf(RKNN3_AUDIO_ENC_ERR "  1. Incorrect core_mask (try 0x7, 0x3, 0x1)\n");
-        printf(RKNN3_AUDIO_ENC_ERR "  2. NPU memory/resource issue\n");
-        printf(RKNN3_AUDIO_ENC_ERR "  3. Device communication problem\n");
         return ret;
     }
 
@@ -126,120 +164,76 @@ int init_audio_encoder(rknn_audio_encoder_context* audio_ctx, const char* model_
     }
     printf("model input num: %d, output num: %d\n", io_num.n_input, io_num.n_output);
 
-    rknn3_shape_config shape_config;
-    ret = rknn3_query(ctx, RKNN3_QUERY_DYNAMIC_SHAPE_CONFIG, &shape_config, sizeof(shape_config));
-    if (ret != RKNN3_SUCCESS) {
-        printf("Query dynamic shape config failed! ret=%d\n", ret);
-        // 如果不支持动态形状，继续使用静态形状
-        shape_config.n_shapes = 1;
-        shape_config.current_shape_id = 0;
+    // Get Model Input Info
+    printf("input tensors:\n");
+    rknn3_tensor_attr input_attrs[io_num.n_input];
+    for (int i = 0; i < io_num.n_input; i++) {
+        input_attrs[i].index = i;
+        ret = rknn3_query(ctx, RKNN3_QUERY_INPUT_ATTR, &(input_attrs[i]), sizeof(rknn3_tensor_attr));
+        if (ret < 0) {
+            printf("rknn_query fail! ret=%d\n", ret);
+            return ret;
+        }
+        dump_tensor_attr(&(input_attrs[i]));
+    }
+
+    // Get Model Output Info
+    printf("output tensors:\n");
+    rknn3_tensor_attr output_attrs[io_num.n_output];
+    for (int i = 0; i < io_num.n_output; i++) {
+        output_attrs[i].index = i;
+        ret = rknn3_query(ctx, RKNN3_QUERY_OUTPUT_ATTR, &(output_attrs[i]), sizeof(rknn3_tensor_attr));
+        if (ret < 0) {
+            printf("rknn_query fail! ret=%d\n", ret);
+            return ret;
+        }
+        dump_tensor_attr(&(output_attrs[i]));
+    }
+
+    // Parse input layout for batch_size, n_mels, window_size
+    if (input_attrs[0].layout == RKNN3_TENSOR_NCHW) {
+        audio_ctx->batch_size = input_attrs[0].shape[0];
+        audio_ctx->n_mels = input_attrs[0].shape[2];
+        audio_ctx->window_size = input_attrs[0].shape[3];
+        printf("NCHW input: batch_size=%d, n_mels=%d, window_size=%d\n",
+               audio_ctx->batch_size, audio_ctx->n_mels, audio_ctx->window_size);
     } else {
-        printf("Model supports %d shape combinations\n", shape_config.n_shapes);
-        printf("Current shape ID: %d\n", shape_config.current_shape_id);
-    }
-
-    rknn3_shape_info *shape_infos = (rknn3_shape_info *)malloc(sizeof(rknn3_shape_info) * shape_config.n_shapes);
-    memset(shape_infos, 0, sizeof(rknn3_shape_info) * shape_config.n_shapes);
-
-    // 为每个形状信息分配输入输出属性内存
-    for (uint32_t i = 0; i < shape_config.n_shapes; i++) {
-        shape_infos[i].shape_id = i;
-        shape_infos[i].input_attrs = (rknn3_tensor_attr *)malloc(sizeof(rknn3_tensor_attr) * io_num.n_input);
-        shape_infos[i].output_attrs = (rknn3_tensor_attr *)malloc(sizeof(rknn3_tensor_attr) * io_num.n_output);
-    }
-
-    // 查询所有形状信息
-    ret = rknn3_query(ctx, RKNN3_QUERY_DYNAMIC_SHAPE_INFO, shape_infos, sizeof(rknn3_shape_info) * shape_config.n_shapes);
-    if (ret != RKNN3_SUCCESS) {
-        printf("Query dynamic shape info failed! ret=%d\n", ret);
-        for (uint32_t i = 0; i < shape_config.n_shapes; i++) {
-            if (shape_infos[i].input_attrs)     free(shape_infos[i].input_attrs);
-            if (shape_infos[i].output_attrs)    free(shape_infos[i].output_attrs);
-        }
-        free(shape_infos);
-        shape_infos = NULL;
-        return ret;
-    }
-
-    // 打印所有形状信息
-    for (uint32_t i = 0; i < shape_config.n_shapes; i++) {
-        printf("Shape %d (ID: %d)%s:\n", i, shape_infos[i].shape_id, shape_infos[i].is_default ? " [Default]" : "");
-        for (uint32_t j = 0; j < shape_infos[i].n_inputs; j++) {
-            rknn3_tensor_attr *attr = &shape_infos[i].input_attrs[j];
-            printf("  Input %d (%s): [", attr->index, attr->name);
-            for (uint32_t k = 0; k < attr->n_dims; k++) {
-                printf("%d%s", attr->shape[k], (k < attr->n_dims - 1) ? ", " : "");
-            }
-            printf("] Aligned size: %lu bytes\n", attr->aligned_size);
-        }
-    }
-
-    audio_ctx->rknn_ctx = ctx;
-    audio_ctx->io_num = io_num;
-    audio_ctx->n_shapes = shape_config.n_shapes;
-
-    // 检查attrs, 并根据shape获取相关参数
-    bool attrs_err = false;
-    for (int i = 0; i < shape_config.n_shapes; i++) {
-        rknn3_tensor_attr* input_attrs = shape_infos[i].input_attrs;
-        rknn3_tensor_attr* output_attrs = shape_infos[i].output_attrs;
-        if (input_attrs[0].layout == RKNN3_TENSOR_UNDEFINED) {
-            audio_ctx->n_mels = input_attrs[0].shape[1];
-            audio_ctx->n_frame[i] = input_attrs[0].shape[2];
-            printf("shape %d: input n_mels=%d, n_frame=%d\n", i, audio_ctx->n_mels, audio_ctx->n_frame[i]);
-        } else {
-            printf("model is not UNDEFINED input 0 layout, model input 0 error!\n");
-            attrs_err = true;
-            break;
-        }
-        if (input_attrs[1].layout == RKNN3_TENSOR_UNDEFINED) {
-            audio_ctx->padded_mask_size[i] = input_attrs[1].shape[input_attrs[1].n_dims-1];
-            printf("shape %d: input padded_mask_size=%d\n", i, audio_ctx->padded_mask_size[i]);
-        } else {
-            printf("model is not UNDEFINED input 1 layout, model input 1 error!\n");
-            attrs_err = true;
-            break;
-        }
-        if (io_num.n_input > 2) {
-            if (input_attrs[2].layout == RKNN3_TENSOR_UNDEFINED) {
-                audio_ctx->attn_mask_size[i] = input_attrs[2].shape[input_attrs[2].n_dims-1];
-                printf("shape %d: input attn_mask_size=%d\n", i, audio_ctx->attn_mask_size[i]);
-            } else {
-                printf("model is not UNDEFINED input 2 layout, model input 2 error!\n");
-                attrs_err = true;
-                break;
-            }
-        }
-        if (output_attrs[0].layout == RKNN3_TENSOR_UNDEFINED) {
-            int n_dims = output_attrs[0].n_dims;
-            audio_ctx->embeds_dim0[i] = output_attrs[0].shape[n_dims-2];
-            audio_ctx->embeds_dim1 = output_attrs[0].shape[n_dims-1];
-            printf("shape %d: output audio embeds dim0=%d,  audio embeds dim1=%d\n", i, audio_ctx->embeds_dim0[i], audio_ctx->embeds_dim1);
-        } else {
-            printf("model is not UNDEFINED output layout, model output error!\n");
-            attrs_err = true;
-            break;
-        }
-    }
-    if (attrs_err) {
-        for (uint32_t i = 0; i < shape_config.n_shapes; i++) {
-            if (shape_infos[i].input_attrs)     free(shape_infos[i].input_attrs);
-            if (shape_infos[i].output_attrs)    free(shape_infos[i].output_attrs);
-        }
-        free(shape_infos);
-        shape_infos = NULL;
+        printf(RKNN3_AUDIO_ENC_ERR "model is not NCHW input layout!\n");
+        rknn3_destroy(ctx);
         return -1;
     }
 
-    audio_ctx->shape_infos = shape_infos;
+    // Parse output embeds shape
+    if (output_attrs[0].layout == RKNN3_TENSOR_UNDEFINED) {
+        audio_ctx->embeds_ndims = output_attrs[0].n_dims;
+        audio_ctx->embeds_shape = (uint32_t*)malloc(audio_ctx->embeds_ndims * sizeof(uint32_t));
+        memcpy(audio_ctx->embeds_shape, output_attrs[0].shape, audio_ctx->embeds_ndims * sizeof(uint32_t));
+        printf("output embeds: ndims=%u, shape=[", audio_ctx->embeds_ndims);
+        for (uint32_t i = 0; i < audio_ctx->embeds_ndims; i++) {
+            printf("%u%s", audio_ctx->embeds_shape[i], i < audio_ctx->embeds_ndims - 1 ? "," : "");
+        }
+        printf("]\n");
+    } else {
+        printf(RKNN3_AUDIO_ENC_ERR "model is not UNDEFINED output layout!\n");
+        rknn3_destroy(ctx);
+        return -1;
+    }
 
+    // Create input/output tensors with mem
+    audio_ctx->rknn_ctx = ctx;
+    audio_ctx->io_num = io_num;
     audio_ctx->inputs = (rknn3_tensor*)malloc(io_num.n_input * sizeof(rknn3_tensor));
     audio_ctx->outputs = (rknn3_tensor*)malloc(io_num.n_output * sizeof(rknn3_tensor));
-    for (int i = 0; i < audio_ctx->io_num.n_input; i++) {
-        audio_ctx->inputs[i].mem  = rknn3_create_mem(ctx, shape_infos[0].input_attrs[i].aligned_size, shape_infos[0].input_attrs[i].core_id, RKNN3_FLAG_MEMORY_CACHEABLE);
+
+    for (int i = 0; i < io_num.n_input; i++) {
+        audio_ctx->inputs[i].mem = rknn3_create_mem(ctx, input_attrs[i].aligned_size, input_attrs[i].core_id, RKNN3_FLAG_MEMORY_CACHEABLE);
+        audio_ctx->inputs[i].attr = (rknn3_tensor_attr*)malloc(sizeof(rknn3_tensor_attr));
+        memcpy(audio_ctx->inputs[i].attr, &(input_attrs[i]), sizeof(rknn3_tensor_attr));
     }
-    for (int i = 0; i < audio_ctx->io_num.n_output; i++) {
-        audio_ctx->outputs[i].mem  = rknn3_create_mem(ctx, shape_infos[0].output_attrs[i].aligned_size, shape_infos[0].output_attrs[i].core_id, RKNN3_FLAG_MEMORY_CACHEABLE);
+    for (int i = 0; i < io_num.n_output; i++) {
+        audio_ctx->outputs[i].mem = rknn3_create_mem(ctx, output_attrs[i].aligned_size, output_attrs[i].core_id, RKNN3_FLAG_MEMORY_CACHEABLE);
+        audio_ctx->outputs[i].attr = (rknn3_tensor_attr*)malloc(sizeof(rknn3_tensor_attr));
+        memcpy(audio_ctx->outputs[i].attr, &(output_attrs[i]), sizeof(rknn3_tensor_attr));
     }
 
     return ret;
@@ -250,22 +244,28 @@ int release_audio_encoder(rknn_audio_encoder_context* audio_ctx)
     for (int i = 0; i < audio_ctx->io_num.n_input; i++) {
         if (audio_ctx->inputs[i].mem)
             rknn3_destroy_mem(audio_ctx->rknn_ctx, audio_ctx->inputs[i].mem);
+        if (audio_ctx->inputs[i].attr) {
+            free(audio_ctx->inputs[i].attr);
+            audio_ctx->inputs[i].attr = NULL;
+        }
     }
     for (int i = 0; i < audio_ctx->io_num.n_output; i++) {
         if (audio_ctx->outputs[i].mem)
             rknn3_destroy_mem(audio_ctx->rknn_ctx, audio_ctx->outputs[i].mem);
+        if (audio_ctx->outputs[i].attr) {
+            free(audio_ctx->outputs[i].attr);
+            audio_ctx->outputs[i].attr = NULL;
+        }
     }
     free(audio_ctx->inputs);
     free(audio_ctx->outputs);
     audio_ctx->inputs = NULL;
     audio_ctx->outputs = NULL;
 
-    for (uint32_t i = 0; i < audio_ctx->n_shapes; i++) {
-        if (audio_ctx->shape_infos[i].input_attrs)     free(audio_ctx->shape_infos[i].input_attrs);
-        if (audio_ctx->shape_infos[i].output_attrs)    free(audio_ctx->shape_infos[i].output_attrs);
+    if (audio_ctx->embeds_shape) {
+        free(audio_ctx->embeds_shape);
+        audio_ctx->embeds_shape = NULL;
     }
-    free(audio_ctx->shape_infos);
-    audio_ctx->shape_infos = NULL;
 
     if (audio_ctx->rknn_ctx) {
         rknn3_destroy(audio_ctx->rknn_ctx);
@@ -274,183 +274,103 @@ int release_audio_encoder(rknn_audio_encoder_context* audio_ctx)
     return 0;
 }
 
-void vecfp32_to_fp16(std::vector<float> &vec, float16 *dst) {
-    for (int i = 0; i < vec.size(); i++) {
-        dst[i] = fp32_to_fp16(vec[i]);
-    }
+int get_n_audio_tokens(rknn_audio_encoder_context* audio_ctx, int audio_len)
+{
+    int n_frame = floor((audio_len - N_FFT) / (float)HOP_LENGTH) + 1;
+    int left_data_len = n_frame % audio_ctx->window_size;
+    int n_left_token = ceil(1.0 * left_data_len / DOWN_SAMPLE_RATE);
+    int n_token_per_window = ceil(1.0 * audio_ctx->window_size / DOWN_SAMPLE_RATE);
+    return floor(n_frame / audio_ctx->window_size) * n_token_per_window + n_left_token;
 }
 
-#define HOP_LENGTH 160
-#define N_FFT 400
-#define MEL_FILTERS_PATH "mel_128_filters.txt"
-
-int get_shape_id(rknn_audio_encoder_context* audio_ctx, int audio_len) {
-    int n_frame_ = (audio_len + HOP_LENGTH - 1) / HOP_LENGTH;
-    int i = audio_ctx->n_shapes - 1;
-    for (; i >= 0; i--) {
-        if (n_frame_ <= audio_ctx->n_frame[i]) {
-            break;
-        }
-    }
-    return i < 0 ? 0 : i;
-}
-
-int get_n_audio_tokens(rknn_audio_encoder_context* audio_ctx, int audio_len) {
-    int shape_id = get_shape_id(audio_ctx, audio_len);
-    return audio_ctx->embeds_dim0[shape_id];
-}
-
-// Prepare audio input (preprocessing only, call once before inference loop)
-int prepare_audio_input(rknn_audio_encoder_context* audio_ctx, audio_buffer_t* audio)
+int inference_audio_encoder(rknn_audio_encoder_context* audio_ctx, audio_buffer_t* audio, float16* audio_embeds)
 {
     if ((!audio_ctx) || (!audio)) {
-        printf("audio_ctx or audio is NULL");
+        printf("audio_ctx or audio is NULL\n");
         return -1;
     }
+    int ret;
 
-    int shape_id = get_shape_id(audio_ctx, audio->num_frames);
+    int batch_size = audio_ctx->batch_size;
     int n_mels = audio_ctx->n_mels;
-    int n_frame = audio_ctx->n_frame[shape_id];
-    int attn_mask_size = audio_ctx->attn_mask_size[shape_id];
+    int window_size = audio_ctx->window_size;
 
     // Read mel filters from file
     int mels_filters_size = N_FFT / 2 + 1;
     float *mel_filters = (float *)malloc(n_mels * mels_filters_size * sizeof(float));
-    int ret = read_mel_filters(MEL_FILTERS_PATH, mel_filters, n_mels * mels_filters_size);
+    ret = read_mel_filters(audio_ctx->mel_filters_path, mel_filters, n_mels * mels_filters_size);
     if (ret != 0) {
-        printf("read mel_filters fail! Please check if the file \"%s\" exists.\n", MEL_FILTERS_PATH);
+        printf("read mel_filters fail! Please check if the file \"%s\" exists.\n", audio_ctx->mel_filters_path);
         free(mel_filters);
         return -1;
     }
 
-    // Preprocess audio data, create padded_feature
-    // printf("input size: %d x %d\n", n_mels, n_frame);
+    // Preprocess audio data to mel spectrogram
+    int n_frame = floor((audio->num_frames - N_FFT) / (float)HOP_LENGTH) + 1;
     std::vector<float> padded_feature(n_mels * n_frame, 0.0f);
     int actual_len;
     audio_preprocess(audio, mel_filters, N_FFT, HOP_LENGTH, n_mels, n_frame * HOP_LENGTH, padded_feature, &actual_len);
-    // printf("audio_data size: %ld\n", padded_feature.size());
     free(mel_filters);
+    float* audio_input_feat = padded_feature.data();
 
-    // Create padded_mask
-    std::vector<float> padded_mask(n_frame, 0.0f);
-    for (int i = 0; i < std::min(actual_len, n_frame); i++) {
-        padded_mask[i] = 1.0f;
-    }
-    // printf("padded_mask size: %ld\n", padded_mask.size());
+    // Chunked inference loop
+    for (int chunk = 0; chunk * batch_size * window_size < n_frame; chunk++) {
+        int real_data_len = std::min(batch_size * window_size, n_frame - chunk * batch_size * window_size);
+        int n_chunk_token = audio_ctx->embeds_shape[0];
 
-    // Create attention_mask
-    std::vector<float> attention_mask(attn_mask_size * attn_mask_size, -1e8f);
-    for (int i = 0; i < attn_mask_size; ++i) {
-        for (int j = 0; j < attn_mask_size; ++j) {
-            attention_mask[i * attn_mask_size + j] = 0.0f;
+        float* dst_base = (float*)audio_ctx->inputs[0].mem->virt_addr;
+
+        if (real_data_len < batch_size * window_size) {
+            memset(dst_base, 0, (batch_size * n_mels * window_size) * sizeof(float));
+            n_chunk_token = real_data_len / window_size * ceil(1.0 * window_size / DOWN_SAMPLE_RATE)
+                          + ceil(1.0 * (real_data_len % window_size) / DOWN_SAMPLE_RATE);
         }
-    }
-    // printf("attention_mask size: %ld\n", attention_mask.size());
-    vecfp32_to_fp16(padded_feature, (float16*)(audio_ctx->inputs[0].mem->virt_addr));
-    vecfp32_to_fp16(padded_mask, (float16*)(audio_ctx->inputs[1].mem->virt_addr));
-    vecfp32_to_fp16(attention_mask, (float16*)(audio_ctx->inputs[2].mem->virt_addr));
 
-    // Set tensor attributes for current shape
-    for (int i = 0; i < audio_ctx->io_num.n_input; i++) {
-        audio_ctx->inputs[i].attr = &(audio_ctx->shape_infos[shape_id].input_attrs[i]);
-    }
-    for (int i = 0; i < audio_ctx->io_num.n_output; i++) {
-        audio_ctx->outputs[i].attr = &(audio_ctx->shape_infos[shape_id].output_attrs[i]);
-    }
+        for (int b = 0; b < batch_size; b++) {
+            int batch_offset = b * n_mels * window_size;
+            int src_frame_start = chunk * batch_size * window_size + b * window_size;
+            int batch_real_len = std::max(0, std::min(window_size, real_data_len - b * window_size));
 
-    // Set shape for dynamic shape model
-    // printf("rknn3_set_shape, shape_id = %d\n", shape_id);
-    ret = rknn3_set_shape(audio_ctx->rknn_ctx, shape_id);
-    if (ret < 0) {
-        printf("rknn3_set_shape fail! ret=%d\n", ret);
-        return ret;
-    }
+            if (batch_real_len > 0) {
+                for (int i = 0; i < n_mels; i++) {
+                    float* dst = dst_base + batch_offset + i * window_size;
+                    float* src = audio_input_feat + i * n_frame + src_frame_start;
+                    memcpy(dst, src, batch_real_len * sizeof(float));
+                }
+            }
+        }
 
-    return 0;
-}
+        // Sync inputs to device
+        for (int i = 0; i < audio_ctx->io_num.n_input; i++) {
+            ret = rknn3_mem_sync(audio_ctx->rknn_ctx, audio_ctx->inputs[i].mem, RKNN3_MEMORY_SYNC_TO_DEVICE);
+            if (ret != RKNN3_SUCCESS) {
+                printf("rknn3_mem_sync input[%d] failed! ret=%d\n", i, ret);
+                return ret;
+            }
+        }
 
-// Sync audio input to device
-int sync_audio_input(rknn_audio_encoder_context* audio_ctx)
-{
-    int ret;
-
-    for (int i = 0; i < audio_ctx->io_num.n_input; i++)
-    {
-        ret = rknn3_mem_sync(audio_ctx->rknn_ctx, audio_ctx->inputs[i].mem, RKNN3_MEMORY_SYNC_TO_DEVICE);
-        if (ret < 0)
-        {
-            printf("rknn3_mem_sync input[%d] fail! ret=%d\n", i, ret);
+        // Run inference
+        ret = rknn3_run(audio_ctx->rknn_ctx, audio_ctx->inputs, audio_ctx->io_num.n_input,
+                         audio_ctx->outputs, audio_ctx->io_num.n_output);
+        if (ret < 0) {
+            printf("rknn_run fail! ret=%d\n", ret);
             return ret;
         }
-    }
-    return 0;
-}
 
-// Sync audio output from device
-int sync_audio_output(rknn_audio_encoder_context* audio_ctx)
-{
-    int ret;
-    for (int i = 0; i < audio_ctx->io_num.n_output; i++)
-    {
-        ret = rknn3_mem_sync(audio_ctx->rknn_ctx, audio_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
-        if (ret < 0)
-        {
-            printf("rknn3_mem_sync output[%d] fail! ret=%d\n", i, ret);
-            return ret;
+        // Sync outputs from device
+        for (int i = 0; i < audio_ctx->io_num.n_output; i++) {
+            ret = rknn3_mem_sync(audio_ctx->rknn_ctx, audio_ctx->outputs[i].mem, RKNN3_MEMORY_SYNC_FROM_DEVICE);
+            if (ret != RKNN3_SUCCESS) {
+                printf("rknn3_mem_sync output[%d] failed! ret=%d\n", i, ret);
+                return ret;
+            }
         }
+
+        // Copy output embeds for this chunk
+        memcpy((float16*)audio_embeds + (chunk * audio_ctx->embeds_shape[0] * audio_ctx->embeds_shape[1]),
+               (float16*)audio_ctx->outputs[0].mem->virt_addr,
+               n_chunk_token * audio_ctx->embeds_shape[1] * sizeof(float16));
     }
-    return 0;
-}
-
-// Run audio encoder inference (mem_sync + rknn3_run, for performance testing)
-int inference_audio_encoder(rknn_audio_encoder_context* audio_ctx)
-{
-    int ret;
-
-    // Sync inputs to device
-    ret = sync_audio_input(audio_ctx);
-    if (ret < 0) {
-        return ret;
-    }
-
-    // Run inference
-    ret = rknn3_run(audio_ctx->rknn_ctx, audio_ctx->inputs, audio_ctx->io_num.n_input, audio_ctx->outputs, audio_ctx->io_num.n_output);
-    if (ret < 0) {
-        printf("rknn_run fail! ret=%d\n", ret);
-        return ret;
-    }
-
-    // Sync outputs from device
-    ret = sync_audio_output(audio_ctx);
-    if (ret < 0) {
-        return ret;
-    }
-
-    return 0;
-}
-
-// Run audio encoder inference without mem_sync (only rknn3_run, for hiding transfer latency)
-int inference_audio_encoder_no_sync(rknn_audio_encoder_context* audio_ctx)
-{
-    // Only run inference, no mem_sync
-    int ret = rknn3_run(audio_ctx->rknn_ctx, audio_ctx->inputs, audio_ctx->io_num.n_input, audio_ctx->outputs, audio_ctx->io_num.n_output);
-    if (ret < 0) {
-        printf("rknn_run fail! ret=%d\n", ret);
-        return ret;
-    }
-
-    return 0;
-}
-
-// Get audio embeddings from output buffer (CPU memcpy operation)
-int get_audio_embeds(rknn_audio_encoder_context* audio_ctx, audio_buffer_t* audio, float16* audio_embeds)
-{
-    // Calculate shape_id from audio length
-    int shape_id = get_shape_id(audio_ctx, audio->num_frames);
-    int embeds_size = audio_ctx->embeds_dim0[shape_id] * audio_ctx->embeds_dim1 * 2;
-
-    // Copy output from NPU memory to user buffer
-    memcpy(audio_embeds, (float16*)audio_ctx->outputs[0].mem->virt_addr, embeds_size);
 
     return 0;
 }
